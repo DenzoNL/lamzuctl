@@ -1,0 +1,6 @@
+.claude
+target/
+
+# Stream Deck plugin builds
+*.sdPlugin/
+*.streamDeckPlugin

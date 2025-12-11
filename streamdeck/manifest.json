@@ -1,0 +1,43 @@
+{
+    "UUID": "io.github.denzonl.lamzuctl",
+    "Name": "Lamzu Mouse Control",
+    "Author": "DenzoNL",
+    "Description": "Unofficial Stream Deck plugin for Lamzu gaming mice. Control profiles, DPI, and monitor battery.",
+    "Version": "1.0.0",
+    "Icon": "icons/plugin",
+    "CodePath": "bin/lamzu-streamdeck.exe",
+    "OS": [
+        {
+            "Platform": "windows",
+            "MinimumVersion": "10"
+        }
+    ],
+    "Software": {
+        "MinimumVersion": "6.0"
+    },
+    "SDKVersion": 2,
+    "Actions": [
+        {
+            "UUID": "io.github.denzonl.lamzuctl.action",
+            "Name": "Mouse Control",
+            "Icon": "icons/action",
+            "Tooltip": "Control Lamzu mouse: switch profiles, change DPI, or show battery",
+            "PropertyInspectorPath": "property-inspector/index.html",
+            "States": [
+                {
+                    "Image": "icons/state-default",
+                    "TitleAlignment": "middle",
+                    "FontSize": "12"
+                },
+                {
+                    "Image": "icons/state-active",
+                    "TitleAlignment": "middle",
+                    "FontSize": "12"
+                }
+            ],
+            "SupportedInMultiActions": true
+        }
+    ],
+    "Category": "Lamzu",
+    "CategoryIcon": "icons/category"
+}

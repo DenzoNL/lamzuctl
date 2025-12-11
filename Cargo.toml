@@ -1,0 +1,48 @@
+[package]
+name = "lamzuctl"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+serde = ["dep:serde"]
+streamdeck = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:serde_json", "dep:base64", "serde"]
+
+[dependencies]
+# Serialization (optional)
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+
+# HID device communication
+hidapi = "2.6"
+
+# CLI argument parsing
+clap = { version = "4.5", features = ["derive"] }
+
+# Error handling
+anyhow = "1.0"
+
+# Colored terminal output
+colored = "2"
+
+# Table formatting
+comfy-table = "7"
+
+# Stream Deck plugin dependencies (optional)
+tokio = { version = "1", features = ["full"], optional = true }
+tokio-tungstenite = { version = "0.24", optional = true }
+futures-util = { version = "0.3", optional = true }
+base64 = { version = "0.22", optional = true }
+
+[lib]
+name = "lamzuctl"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lamzuctl"
+path = "src/bin/lamzuctl/main.rs"
+
+[[bin]]
+name = "lamzu-streamdeck"
+path = "src/bin/lamzu_streamdeck/main.rs"
+required-features = ["streamdeck"]

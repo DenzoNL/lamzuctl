@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Lamzu Mouse Control</title>
+    <link rel="stylesheet" href="sdpi.css">
+    <style>
+        .status-connected { color: #4CAF50; }
+        .status-disconnected { color: #f44336; }
+        .hidden { display: none !important; }
+        .checkbox-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .checkbox-item input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            margin: 0;
+        }
+        .checkbox-item label {
+            cursor: pointer;
+            user-select: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="sdpi-wrapper">
+        <div class="sdpi-heading">Lamzu Mouse Control</div>
+
+        <div class="sdpi-item">
+            <div class="sdpi-item-label">Mode</div>
+            <select class="sdpi-item-value" id="mode">
+                <option value="profile">Profile Cycle</option>
+                <option value="dpi">DPI Cycle</option>
+                <option value="battery">Battery Monitor</option>
+            </select>
+        </div>
+
+        <div class="sdpi-item" id="profiles-container">
+            <div class="sdpi-item-label">Profiles</div>
+            <div class="sdpi-item-value checkbox-group" id="profileCheckboxes">
+                <div class="checkbox-item">
+                    <input type="checkbox" id="profile1" value="1">
+                    <label for="profile1">P1</label>
+                </div>
+                <div class="checkbox-item">
+                    <input type="checkbox" id="profile2" value="2">
+                    <label for="profile2">P2</label>
+                </div>
+                <div class="checkbox-item">
+                    <input type="checkbox" id="profile3" value="3">
+                    <label for="profile3">P3</label>
+                </div>
+                <div class="checkbox-item">
+                    <input type="checkbox" id="profile4" value="4">
+                    <label for="profile4">P4</label>
+                </div>
+                <div class="checkbox-item">
+                    <input type="checkbox" id="profile5" value="5">
+                    <label for="profile5">P5</label>
+                </div>
+            </div>
+        </div>
+
+        <div class="sdpi-item hidden" id="dpi-info">
+            <div class="sdpi-item-label">Info</div>
+            <div class="sdpi-item-value" style="font-size: 0.9em; color: #888;">
+                Cycles through all DPI stages configured for the current profile
+            </div>
+        </div>
+
+        <div class="sdpi-item hidden" id="battery-toggle-container">
+            <div class="sdpi-item-label">Battery</div>
+            <div class="sdpi-item-value">
+                <input type="checkbox" id="showBattery">
+                <label for="showBattery" style="cursor: pointer; user-select: none;">
+                    Show as background bar
+                </label>
+            </div>
+        </div>
+
+        <div class="sdpi-item">
+            <div class="sdpi-item-label">Device</div>
+            <select class="sdpi-item-value" id="deviceSelector">
+                <option value="">Auto-detect</option>
+            </select>
+        </div>
+
+        <div class="sdpi-item">
+            <div class="sdpi-item-label">Status</div>
+            <div class="sdpi-item-value" id="status">
+                <span class="status-disconnected">Not connected</span>
+            </div>
+        </div>
+
+        <div class="sdpi-item">
+            <div class="sdpi-item-label empty"></div>
+            <button class="sdpi-item-value" id="refreshBtn">Refresh</button>
+        </div>
+    </div>
+
+    <script src="main.js"></script>
+</body>
+</html>
