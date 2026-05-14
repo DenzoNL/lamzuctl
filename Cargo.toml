@@ -7,6 +7,7 @@ edition = "2021"
 default = []
 serde = ["dep:serde"]
 streamdeck = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:serde_json", "dep:base64", "serde"]
+gui = ["dep:eframe", "dep:egui"]
 
 [dependencies]
 # Serialization (optional)
@@ -34,6 +35,10 @@ tokio-tungstenite = { version = "0.24", optional = true }
 futures-util = { version = "0.3", optional = true }
 base64 = { version = "0.22", optional = true }
 
+# GUI dependencies (optional)
+eframe = { version = "0.30", optional = true }
+egui = { version = "0.30", optional = true }
+
 [lib]
 name = "lamzuctl"
 path = "src/lib.rs"
@@ -46,3 +51,8 @@ path = "src/bin/lamzuctl/main.rs"
 name = "lamzu-streamdeck"
 path = "src/bin/lamzu_streamdeck/main.rs"
 required-features = ["streamdeck"]
+
+[[bin]]
+name = "lamzuctl-gui"
+path = "src/bin/lamzuctl_gui/main.rs"
+required-features = ["gui"]

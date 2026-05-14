@@ -3,6 +3,9 @@
 /// Default number of profiles on Lamzu mice
 pub const DEFAULT_PROFILE_COUNT: u8 = 5;
 
+/// Default number of DPI stages per profile on Lamzu mice
+pub const DEFAULT_DPI_STAGE_COUNT: u8 = 6;
+
 /// Battery status information
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

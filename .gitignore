@@ -1,4 +1,5 @@
 .claude
+gui-handoff
 target/
 
 # Stream Deck plugin builds

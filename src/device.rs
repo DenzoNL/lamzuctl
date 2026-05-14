@@ -225,19 +225,6 @@ pub fn select_device<'a>(
                         break;
                     }
                 }
-
-                eprintln!(
-                    "Note: {} devices found, auto-selected device {}. Use --device to select another:",
-                    devices.len(),
-                    selected_idx + 1
-                );
-                for (i, d) in devices.iter().enumerate() {
-                    let name = d.product_string.as_deref().unwrap_or("Unknown");
-                    let marker = if i == selected_idx { " [selected]" } else { "" };
-                    eprintln!("  {}  {} ({:04x}){}", i + 1, name, d.product_id, marker);
-                }
-                eprintln!();
-
                 return Ok(&devices[selected_idx]);
             }
             Ok(&devices[0])

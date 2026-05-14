@@ -210,7 +210,7 @@ impl DeviceController {
     pub fn get_profile_info(&self, profile_id: u8) -> Result<ProfileInfo> {
         let polling_rate = self.get_polling_rate(profile_id)?;
         let active_dpi_stage = self.get_active_dpi_stage(profile_id)?;
-        let dpi_stages = self.get_dpi_stages(profile_id, 6)?;
+        let dpi_stages = self.get_dpi_stages(profile_id, DEFAULT_DPI_STAGE_COUNT)?;
 
         Ok(ProfileInfo {
             id: profile_id,
@@ -527,7 +527,7 @@ impl DeviceController {
     pub fn get_current_dpi(&self) -> Result<DpiStage> {
         let profile = self.get_profile()?;
         let active_stage = self.get_active_dpi_stage(profile)?;
-        let stages = self.get_dpi_stages(profile, 6)?;
+        let stages = self.get_dpi_stages(profile, DEFAULT_DPI_STAGE_COUNT)?;
 
         stages
             .get(active_stage as usize - 1)
