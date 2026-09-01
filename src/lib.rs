@@ -6,6 +6,7 @@
 mod controller;
 mod device;
 mod device_db;
+mod lock;
 mod protocol;
 mod types;
 

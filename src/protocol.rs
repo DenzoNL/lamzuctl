@@ -51,7 +51,7 @@ pub(crate) fn validate_response(response: &[u8]) -> Result<()> {
     let marker = response.get(1).copied().unwrap_or(0);
 
     // Accept markers in range 0xA0-0xAF (160-175) as valid responses
-    if marker < 0xA0 || marker > 0xAF {
+    if !(0xA0..=0xAF).contains(&marker) {
         anyhow::bail!(
             "Device returned error response (expected 0xA0-0xAF, got 0x{:02X})",
             marker
@@ -75,7 +75,9 @@ pub(crate) fn polling_rate_to_hz(raw: u8) -> u16 {
         0x02 => 500,
         0x04 => 250,
         0x08 => 125,
-        // Extended polling rates for 4K/8K devices
+        // Extended polling rates for 2K/4K/8K devices. 0x40 -> 4000 is
+        // verified on a Maya X 8K; 0x20 -> 2000 follows the same pattern.
+        0x20 => 2000,
         0x40 => 4000,
         0x80 => 8000,
         _ => raw as u16,

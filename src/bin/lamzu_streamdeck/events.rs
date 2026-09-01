@@ -44,7 +44,7 @@ type WsReader = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 async fn send_command(writer: &Arc<RwLock<WsWriter>>, command: StreamDeckCommand) -> Result<()> {
     let json = serde_json::to_string(&command)?;
     let mut writer = writer.write().await;
-    writer.send(Message::Text(json)).await?;
+    writer.send(Message::Text(json.into())).await?;
     Ok(())
 }
 

@@ -5,6 +5,7 @@ use hidapi::HidApi;
 use std::ffi::CString;
 
 use crate::device::list_devices;
+use crate::lock::DeviceLock;
 use crate::protocol::*;
 use crate::types::*;
 
@@ -12,6 +13,9 @@ use crate::types::*;
 pub struct DeviceController {
     api: HidApi,
     device: Option<hidapi::HidDevice>,
+    /// Advisory cross-process lock serializing HID transactions on this
+    /// device (see the `lock` module).
+    lock: Option<DeviceLock>,
 }
 
 impl DeviceController {
@@ -21,6 +25,7 @@ impl DeviceController {
         Ok(Self {
             api,
             device: None,
+            lock: None,
         })
     }
 
@@ -49,6 +54,7 @@ impl DeviceController {
             .context("Failed to open device at specified path")?;
 
         self.device = Some(device);
+        self.lock = Some(DeviceLock::for_device(path));
         Ok(())
     }
 
@@ -91,6 +97,14 @@ impl DeviceController {
         let device = self.device.as_ref()
             .context("Device not connected")?;
 
+        // Serialize the whole round trip against other lamzuctl processes:
+        // a read landing between another process's send and receive would
+        // pick up the wrong response.
+        let _transaction = match &self.lock {
+            Some(lock) => Some(lock.transaction()?),
+            None => None,
+        };
+
         // Send the command via Set Feature Report
         // First byte must be Report ID (0x00)
         let mut send_buf = [0u8; 65];
@@ -126,6 +140,37 @@ impl DeviceController {
         // Response: [0]=RptID, [1]=Marker, [2]=?, [3]=DevID, [4]=Len, [5]=Cat, [6]=Opcode, [7]=Profile
         // Device returns 1-based profile ID
         get_response_byte(&response, 7)
+    }
+
+    /// Get the active profile, verifying that the mouse itself is answering.
+    ///
+    /// The dongle acknowledges commands even when the mouse is asleep or out
+    /// of range, reporting profile 0 — a value an awake mouse never returns
+    /// (profiles are 1-based). Profile 0 can also be a short transient while
+    /// the device settles after a write (possibly from another process), so
+    /// a zero reading is re-checked a few times before failing with
+    /// [`MouseNotResponding`].
+    pub fn active_profile(&self) -> Result<u8> {
+        const ATTEMPTS: u32 = 3;
+        for attempt in 1..=ATTEMPTS {
+            let profile = self.get_profile()?;
+            if profile != 0 {
+                return Ok(profile);
+            }
+            if attempt < ATTEMPTS {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+        Err(anyhow::Error::new(MouseNotResponding))
+    }
+
+    /// Check whether the mouse itself is answering (see [`Self::active_profile`]).
+    pub fn is_mouse_responding(&self) -> Result<bool> {
+        match self.active_profile() {
+            Ok(_) => Ok(true),
+            Err(err) if err.is::<MouseNotResponding>() => Ok(false),
+            Err(err) => Err(err),
+        }
     }
 
     /// Get battery status (percentage and charging state)
@@ -311,6 +356,12 @@ impl DeviceController {
         let response = self.send_and_receive(&cmd)?;
         validate_response(&response)?;
 
+        // NOTE: A Maya X 8K answers this query with payload bytes
+        // 00 00 00 12 00 1c (mouse) / 00 00 00 12 00 37 b0 00 01 (dongle),
+        // so both parse to "0.0.0.18" under the layout below. The real
+        // version encoding on this hardware is unknown; the distinguishing
+        // data sits past the documented field (mouse 0x001c, dongle
+        // 0x37b0 0001). Do not trust equal readings as "same firmware".
         // Protocol detection from Lamzu source:
         // - response[6] == 0x81 -> new protocol (data at byte 7+)
         // - response[5] == 0x81 -> old protocol (data at byte 6+)
@@ -588,8 +639,9 @@ impl DeviceController {
         let active_stage = self.get_active_dpi_stage(profile)?;
         let stages = self.get_dpi_stages(profile, DEFAULT_DPI_STAGE_COUNT)?;
 
-        stages
-            .get(active_stage as usize - 1)
+        (active_stage as usize)
+            .checked_sub(1)
+            .and_then(|i| stages.get(i))
             .copied()
             .ok_or_else(|| anyhow::anyhow!("Active DPI stage {} not found in stages list", active_stage))
     }

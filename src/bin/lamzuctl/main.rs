@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(name = "lamzuctl")]
 #[command(about = "Control utility for Lamzu gaming mice", long_about = None)]
+#[command(after_help = "Exit codes:\n  0  success\n  1  error\n  2  mouse not responding (asleep, powered off, or out of range)")]
 struct Cli {
     /// Device to use (index from `list`, name substring, or PID like "001c")
     #[arg(short, long, global = true)]
@@ -45,6 +46,9 @@ enum Commands {
 enum GetCommands {
     /// Get current profile number
     Profile,
+
+    /// Check whether the mouse is responding (exit code 2 if asleep)
+    Status,
 
     /// Get polling rate in Hz
     PollingRate,
@@ -97,7 +101,21 @@ enum SetCommands {
     },
 }
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(err) = run() {
+        // A sleeping mouse is a distinct state, not an error: give it its
+        // own exit code so pollers (status bars, scripts) can tell it apart
+        // from real failures.
+        if err.is::<lamzuctl::MouseNotResponding>() {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
+        eprintln!("Error: {err:?}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
     let device = cli.device.as_deref();
 
@@ -110,6 +128,7 @@ fn main() -> Result<()> {
         Commands::Profiles => commands::profiles(device),
         Commands::Get { setting } => match setting {
             GetCommands::Profile => commands::get::profile(device),
+            GetCommands::Status => commands::get::status(device),
             GetCommands::PollingRate => commands::get::polling_rate(device),
             GetCommands::Dpi => commands::get::dpi(device),
             GetCommands::Battery => commands::get::battery(device),

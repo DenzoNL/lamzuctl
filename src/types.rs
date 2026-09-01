@@ -6,6 +6,28 @@ pub const DEFAULT_PROFILE_COUNT: u8 = 5;
 /// Default number of DPI stages per profile on Lamzu mice
 pub const DEFAULT_DPI_STAGE_COUNT: u8 = 6;
 
+/// Error for when the wireless mouse is not answering the dongle.
+///
+/// The dongle keeps acknowledging HID commands while the mouse is asleep,
+/// powered off, or out of range — but every mouse-sourced value reads zero
+/// (battery 0%, profile 0, firmware 0.0.0.0). Rather than passing those
+/// zeros off as real data, commands fail with this error so callers can tell
+/// "mouse asleep" apart from "battery genuinely empty". The CLI maps it to
+/// exit code 2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MouseNotResponding;
+
+impl std::fmt::Display for MouseNotResponding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "mouse is not responding (asleep, powered off, or out of range); move it to wake it"
+        )
+    }
+}
+
+impl std::error::Error for MouseNotResponding {}
+
 /// Battery status information
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
