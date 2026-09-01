@@ -5,6 +5,7 @@ use hidapi::HidApi;
 use std::ffi::CString;
 
 use crate::device_db::is_lamzu_vendor;
+use crate::lock::DeviceLock;
 use crate::protocol::{build_command, CATEGORY_GENERAL, DEVICE_ID_MOUSE, OP_GET_PROFILE};
 
 /// Information about a detected device
@@ -135,6 +136,13 @@ fn probe_device(device: &DeviceInfo) -> bool {
 
     let hid_device = match api.open_path(&c_path) {
         Ok(d) => d,
+        Err(_) => return false,
+    };
+
+    // Serialize the probe round trip against other lamzuctl processes.
+    let lock = DeviceLock::for_device(&device.path);
+    let _transaction = match lock.transaction() {
+        Ok(guard) => guard,
         Err(_) => return false,
     };
 

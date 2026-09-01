@@ -5,6 +5,7 @@ use hidapi::HidApi;
 use std::ffi::CString;
 
 use crate::device::list_devices;
+use crate::lock::DeviceLock;
 use crate::protocol::*;
 use crate::types::*;
 
@@ -12,6 +13,9 @@ use crate::types::*;
 pub struct DeviceController {
     api: HidApi,
     device: Option<hidapi::HidDevice>,
+    /// Advisory cross-process lock serializing HID transactions on this
+    /// device (see the `lock` module).
+    lock: Option<DeviceLock>,
 }
 
 impl DeviceController {
@@ -21,6 +25,7 @@ impl DeviceController {
         Ok(Self {
             api,
             device: None,
+            lock: None,
         })
     }
 
@@ -49,6 +54,7 @@ impl DeviceController {
             .context("Failed to open device at specified path")?;
 
         self.device = Some(device);
+        self.lock = Some(DeviceLock::for_device(path));
         Ok(())
     }
 
@@ -90,6 +96,14 @@ impl DeviceController {
     fn send_and_receive_once(&self, command: &[u8; 64], delay_ms: u32) -> Result<Vec<u8>> {
         let device = self.device.as_ref()
             .context("Device not connected")?;
+
+        // Serialize the whole round trip against other lamzuctl processes:
+        // a read landing between another process's send and receive would
+        // pick up the wrong response.
+        let _transaction = match &self.lock {
+            Some(lock) => Some(lock.transaction()?),
+            None => None,
+        };
 
         // Send the command via Set Feature Report
         // First byte must be Report ID (0x00)
