@@ -241,7 +241,27 @@ impl DeviceController {
     }
 
     /// Get detailed information for a specific profile
+    ///
+    /// A read taken while the device is still settling (right after a profile
+    /// switch) can come back zeroed, which would make a configured profile look
+    /// unconfigured. Retry such a read a few times before believing it.
     pub fn get_profile_info(&self, profile_id: u8) -> Result<ProfileInfo> {
+        const MAX_ATTEMPTS: u32 = 3;
+
+        let mut info = self.read_profile_info(profile_id)?;
+        for _ in 1..MAX_ATTEMPTS {
+            if info.is_configured() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            info = self.read_profile_info(profile_id)?;
+        }
+
+        Ok(info)
+    }
+
+    /// One pass of reading a profile's settings, without retry.
+    fn read_profile_info(&self, profile_id: u8) -> Result<ProfileInfo> {
         let polling_rate = self.get_polling_rate(profile_id)?;
         let active_dpi_stage = self.get_active_dpi_stage(profile_id)?;
         let dpi_stages = self.get_dpi_stages(profile_id, DEFAULT_DPI_STAGE_COUNT)?;
@@ -523,6 +543,11 @@ impl DeviceController {
 
         let response = self.send_and_receive(&cmd)?;
         validate_response(&response)?;
+
+        // A profile switch takes a moment to apply. Returning immediately lets
+        // the next command (often a separate process, e.g. a Stream Deck key)
+        // read stale data back.
+        std::thread::sleep(std::time::Duration::from_millis(150));
 
         Ok(())
     }
