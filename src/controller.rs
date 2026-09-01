@@ -142,6 +142,37 @@ impl DeviceController {
         get_response_byte(&response, 7)
     }
 
+    /// Get the active profile, verifying that the mouse itself is answering.
+    ///
+    /// The dongle acknowledges commands even when the mouse is asleep or out
+    /// of range, reporting profile 0 — a value an awake mouse never returns
+    /// (profiles are 1-based). Profile 0 can also be a short transient while
+    /// the device settles after a write (possibly from another process), so
+    /// a zero reading is re-checked a few times before failing with
+    /// [`MouseNotResponding`].
+    pub fn active_profile(&self) -> Result<u8> {
+        const ATTEMPTS: u32 = 3;
+        for attempt in 1..=ATTEMPTS {
+            let profile = self.get_profile()?;
+            if profile != 0 {
+                return Ok(profile);
+            }
+            if attempt < ATTEMPTS {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+        Err(anyhow::Error::new(MouseNotResponding))
+    }
+
+    /// Check whether the mouse itself is answering (see [`Self::active_profile`]).
+    pub fn is_mouse_responding(&self) -> Result<bool> {
+        match self.active_profile() {
+            Ok(_) => Ok(true),
+            Err(err) if err.is::<MouseNotResponding>() => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+
     /// Get battery status (percentage and charging state)
     pub fn get_battery(&self) -> Result<BatteryStatus> {
         let cmd = build_command(DEVICE_ID_MOUSE, 0x02, CATEGORY_GENERAL, OP_GET_BATTERY, &[]);
