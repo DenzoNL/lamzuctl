@@ -450,7 +450,7 @@ fn profile_row(ui: &mut egui::Ui, id: u8, selected: bool, enabled: bool) -> bool
                 ui.style().visuals.text_color()
             };
             ui.painter()
-                .rect(rect, 4.0, bg, (1.25, ui.style().visuals.text_color()));
+                .rect(rect, 4.0, bg, (1.25, ui.style().visuals.text_color()), egui::StrokeKind::Middle);
             ui.painter().text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -476,7 +476,7 @@ fn battery_gauge(ui: &mut egui::Ui, pct: u8, charging: bool) {
         vec2(4.0, 8.0),
     );
     let ink = ui.style().visuals.text_color();
-    ui.painter().rect_stroke(body, 3.0, (1.25, ink));
+    ui.painter().rect_stroke(body, 3.0, (1.25, ink), egui::StrokeKind::Middle);
     ui.painter().rect_filled(tip, 1.0, ink);
     let inset = body.shrink(3.0);
     let fill_w = inset.width() * (pct.min(100) as f32 / 100.0);

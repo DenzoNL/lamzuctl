@@ -134,7 +134,7 @@ async fn main() -> Result<()> {
 
     {
         let mut w = writer.write().await;
-        w.send(Message::Text(registration_json))
+        w.send(Message::Text(registration_json.into()))
             .await
             .context("Failed to send registration")?;
     }

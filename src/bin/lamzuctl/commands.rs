@@ -19,7 +19,7 @@ pub fn connect_to_device(selector: Option<&str>) -> Result<DeviceController> {
 /// Helper to create a key-value table with no borders
 fn kv_table() -> Table {
     let mut table = Table::new();
-    table.load_preset(NOTHING);
+    table.load_style(NOTHING);
     table.set_content_arrangement(comfy_table::ContentArrangement::Dynamic);
     table
 }
@@ -152,7 +152,7 @@ pub fn info(device_selector: Option<&str>) -> Result<()> {
 
     // DPI stages table
     let mut dpi_table = Table::new();
-    dpi_table.load_preset(NOTHING);
+    dpi_table.load_style(NOTHING);
     dpi_table.set_header(vec![
         Cell::new("Stage").add_attribute(Attribute::Bold),
         Cell::new("DPI").add_attribute(Attribute::Bold),
@@ -214,7 +214,7 @@ pub fn profiles(device_selector: Option<&str>) -> Result<()> {
     println!("Profiles ({} configured):\n", profiles.len());
 
     let mut table = Table::new();
-    table.load_preset(NOTHING);
+    table.load_style(NOTHING);
     table.set_header(vec![
         Cell::new("Profile").add_attribute(Attribute::Bold),
         Cell::new("Polling").add_attribute(Attribute::Bold),
@@ -280,7 +280,7 @@ pub mod get {
         println!("DPI Configuration (Profile {}):\n", profile);
 
         let mut table = Table::new();
-        table.load_preset(NOTHING);
+        table.load_style(NOTHING);
         table.set_header(vec![
             Cell::new("Stage").add_attribute(Attribute::Bold),
             Cell::new("DPI").add_attribute(Attribute::Bold),
