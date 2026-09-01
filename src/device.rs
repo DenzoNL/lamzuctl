@@ -63,7 +63,11 @@ pub(crate) fn list_devices_raw() -> Result<Vec<DeviceInfo>> {
                 product_string: device.product_string().map(|s| s.to_string()),
                 manufacturer_string: device.manufacturer_string().map(|s| s.to_string()),
                 serial_number: device.serial_number().map(|s| s.to_string()),
-                interface_number: extract_interface_number(&path),
+                interface_number: device
+                    .interface_number()
+                    .try_into()
+                    .ok()
+                    .or_else(|| extract_interface_number(&path)),
                 usage_page: device.usage_page(),
                 usage: device.usage(),
                 path,
