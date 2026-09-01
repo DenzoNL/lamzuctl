@@ -418,16 +418,21 @@ pub mod set {
     pub fn profile(device_selector: Option<&str>, id: u8) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
 
-        // Validate profile ID before attempting to set
-        let configured_profiles = controller.get_configured_profiles()?;
-        let max_profile = configured_profiles.len() as u8;
-
-        if id < 1 || id > max_profile {
+        // Validate just the requested profile rather than enumerating every
+        // profile, which costs a HID round trip per setting per profile.
+        if id < 1 || id > lamzuctl::DEFAULT_PROFILE_COUNT {
             anyhow::bail!(
-                "Invalid profile ID: {}. Valid range is 1-{} ({} configured profiles)",
+                "Invalid profile ID: {}. Valid range is 1-{}",
                 id,
-                max_profile,
-                max_profile
+                lamzuctl::DEFAULT_PROFILE_COUNT
+            );
+        }
+
+        if !controller.get_profile_info(id)?.is_configured() {
+            anyhow::bail!(
+                "Profile {} is not configured on this device. Run `lamzuctl profiles` \
+                 to see the configured profiles.",
+                id
             );
         }
 
@@ -437,20 +442,34 @@ pub mod set {
         Ok(())
     }
 
-    pub fn dpi(device_selector: Option<&str>, stage: u8) -> Result<()> {
+    pub fn dpi(device_selector: Option<&str>, value: u16) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
         let profile = controller.get_profile()?;
         let dpi_stages = controller.get_dpi_stages(profile, 6)?;
-        let max_stage = dpi_stages.len() as u8;
+        let max_stage = dpi_stages.len() as u16;
 
-        if stage < 1 || stage > max_stage {
-            anyhow::bail!(
-                "Invalid DPI stage: {}. Valid range is 1-{} ({} stages configured)",
-                stage,
-                max_stage,
-                max_stage
-            );
-        }
+        // A small number is a stage index; anything larger is a DPI value, which
+        // we resolve to the stage configured with it. The device only switches
+        // between preset stages, so a DPI value has to already be on a stage.
+        let stage = if value >= 1 && value <= max_stage {
+            value as u8
+        } else {
+            match dpi_stages.iter().position(|s| s.x == value && s.y == value) {
+                Some(idx) => (idx + 1) as u8,
+                None => {
+                    let available: Vec<String> =
+                        dpi_stages.iter().map(format_dpi).collect();
+                    anyhow::bail!(
+                        "No DPI stage set to {} in profile {}. Valid stages are 1-{}; \
+                         configured DPI values are: {}",
+                        value,
+                        profile,
+                        max_stage,
+                        available.join(", ")
+                    );
+                }
+            }
+        };
 
         controller.set_dpi_stage(profile, stage)?;
 

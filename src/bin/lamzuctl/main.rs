@@ -89,11 +89,11 @@ enum SetCommands {
         id: u8,
     },
 
-    /// Set active DPI stage
+    /// Set active DPI stage, by stage number or by DPI value
     Dpi {
-        /// DPI stage number (1 to number of stages, typically 1-6)
-        #[arg(value_name = "STAGE")]
-        stage: u8,
+        /// DPI stage number (1-6), or a DPI value configured on a stage (e.g. 3200)
+        #[arg(value_name = "STAGE_OR_DPI")]
+        stage: u16,
     },
 }
 
