@@ -75,7 +75,9 @@ pub(crate) fn polling_rate_to_hz(raw: u8) -> u16 {
         0x02 => 500,
         0x04 => 250,
         0x08 => 125,
-        // Extended polling rates for 4K/8K devices
+        // Extended polling rates for 2K/4K/8K devices. 0x40 -> 4000 is
+        // verified on a Maya X 8K; 0x20 -> 2000 follows the same pattern.
+        0x20 => 2000,
         0x40 => 4000,
         0x80 => 8000,
         _ => raw as u16,

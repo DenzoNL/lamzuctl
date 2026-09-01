@@ -356,6 +356,12 @@ impl DeviceController {
         let response = self.send_and_receive(&cmd)?;
         validate_response(&response)?;
 
+        // NOTE: A Maya X 8K answers this query with payload bytes
+        // 00 00 00 12 00 1c (mouse) / 00 00 00 12 00 37 b0 00 01 (dongle),
+        // so both parse to "0.0.0.18" under the layout below. The real
+        // version encoding on this hardware is unknown; the distinguishing
+        // data sits past the documented field (mouse 0x001c, dongle
+        // 0x37b0 0001). Do not trust equal readings as "same firmware".
         // Protocol detection from Lamzu source:
         // - response[6] == 0x81 -> new protocol (data at byte 7+)
         // - response[5] == 0x81 -> old protocol (data at byte 6+)
