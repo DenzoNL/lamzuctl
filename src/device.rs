@@ -5,7 +5,7 @@ use hidapi::HidApi;
 use std::ffi::CString;
 
 use crate::device_db::is_lamzu_vendor;
-use crate::protocol::{CATEGORY_GENERAL, DEVICE_ID_MOUSE, OP_GET_PROFILE};
+use crate::protocol::{build_command, CATEGORY_GENERAL, DEVICE_ID_MOUSE, OP_GET_PROFILE};
 
 /// Information about a detected device
 #[derive(Debug, Clone)]
@@ -138,16 +138,10 @@ fn probe_device(device: &DeviceInfo) -> bool {
         Err(_) => return false,
     };
 
-    // Build get_profile command (same as build_command but with report ID prefix)
-    // Command format: [0]=ReportID, [1..65]=command data
-    // Command data: [2]=DeviceID, [3]=PayloadLen, [4]=Category, [5]=Opcode
+    // Command format: [0]=ReportID (0x00), [1..65]=command data
+    let cmd = build_command(DEVICE_ID_MOUSE, 0x01, CATEGORY_GENERAL, OP_GET_PROFILE, &[]);
     let mut send_buf = [0u8; 65];
-    send_buf[0] = 0x00; // Report ID
-    // Offsets +1 because of report ID prefix
-    send_buf[1 + 2] = DEVICE_ID_MOUSE; // [3] in send_buf = device_id
-    send_buf[1 + 3] = 0x01;            // [4] = payload_len
-    send_buf[1 + 4] = CATEGORY_GENERAL; // [5] = category
-    send_buf[1 + 5] = OP_GET_PROFILE;  // [6] = opcode
+    send_buf[1..].copy_from_slice(&cmd);
 
     if hid_device.send_feature_report(&send_buf).is_err() {
         return false;
@@ -196,9 +190,12 @@ pub fn select_device<'a>(
         Some(sel) => {
             // Try index (1-based)
             if let Ok(idx) = sel.parse::<usize>() {
-                return devices.get(idx - 1).ok_or_else(|| {
-                    anyhow::anyhow!("Device index {} out of range (1-{})", idx, devices.len())
-                });
+                return idx
+                    .checked_sub(1)
+                    .and_then(|i| devices.get(i))
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Device index {} out of range (1-{})", idx, devices.len())
+                    });
             }
             // Try PID (hex)
             let sel_clean = sel.trim_start_matches("0x").trim_start_matches("0X");

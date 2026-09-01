@@ -588,8 +588,9 @@ impl DeviceController {
         let active_stage = self.get_active_dpi_stage(profile)?;
         let stages = self.get_dpi_stages(profile, DEFAULT_DPI_STAGE_COUNT)?;
 
-        stages
-            .get(active_stage as usize - 1)
+        (active_stage as usize)
+            .checked_sub(1)
+            .and_then(|i| stages.get(i))
             .copied()
             .ok_or_else(|| anyhow::anyhow!("Active DPI stage {} not found in stages list", active_stage))
     }

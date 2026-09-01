@@ -230,7 +230,9 @@ pub fn profiles(device_selector: Option<&str>) -> Result<()> {
             ""
         };
 
-        let active_dpi = profile.dpi_stages.get(profile.active_dpi_stage as usize - 1);
+        let active_dpi = (profile.active_dpi_stage as usize)
+            .checked_sub(1)
+            .and_then(|i| profile.dpi_stages.get(i));
         let dpi_text = active_dpi.map(format_dpi).unwrap_or_default();
 
         table.add_row(vec![
