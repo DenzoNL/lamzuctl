@@ -113,6 +113,7 @@ fn open_lock_file(device_path: &str) -> std::io::Result<File> {
 
     OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(lock_dir().join(name))

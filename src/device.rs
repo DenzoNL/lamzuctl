@@ -39,10 +39,10 @@ fn extract_interface_number(path: &str) -> Option<u8> {
     if let Some(mi_pos) = path_upper.find("MI_") {
         let after_mi = &path_upper[mi_pos + 3..];
         // Extract the two hex digits after MI_
-        if after_mi.len() >= 2 {
-            if let Ok(num) = u8::from_str_radix(&after_mi[..2], 16) {
-                return Some(num);
-            }
+        if after_mi.len() >= 2
+            && let Ok(num) = u8::from_str_radix(&after_mi[..2], 16)
+        {
+            return Some(num);
         }
     }
     None
@@ -207,10 +207,10 @@ pub fn select_device<'a>(
             }
             // Try PID (hex)
             let sel_clean = sel.trim_start_matches("0x").trim_start_matches("0X");
-            if let Ok(pid) = u16::from_str_radix(sel_clean, 16) {
-                if let Some(d) = devices.iter().find(|d| d.product_id == pid) {
-                    return Ok(d);
-                }
+            if let Ok(pid) = u16::from_str_radix(sel_clean, 16)
+                && let Some(d) = devices.iter().find(|d| d.product_id == pid)
+            {
+                return Ok(d);
             }
             // Try name substring (case-insensitive)
             let sel_lower = sel.to_lowercase();

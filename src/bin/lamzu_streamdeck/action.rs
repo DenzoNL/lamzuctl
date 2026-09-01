@@ -36,7 +36,10 @@ impl ActionInstance {
             }
             ActionMode::Dpi => {
                 // Show current DPI value from device state
-                if let Some(dpi_stage) = state.dpi_stages.get(state.current_dpi_stage as usize - 1) {
+                if let Some(dpi_stage) = (state.current_dpi_stage as usize)
+                    .checked_sub(1)
+                    .and_then(|i| state.dpi_stages.get(i))
+                {
                     format!("{}", dpi_stage.x)
                 } else {
                     format!("DPI{}", state.current_dpi_stage)

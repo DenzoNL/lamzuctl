@@ -51,7 +51,7 @@ pub(crate) fn validate_response(response: &[u8]) -> Result<()> {
     let marker = response.get(1).copied().unwrap_or(0);
 
     // Accept markers in range 0xA0-0xAF (160-175) as valid responses
-    if marker < 0xA0 || marker > 0xAF {
+    if !(0xA0..=0xAF).contains(&marker) {
         anyhow::bail!(
             "Device returned error response (expected 0xA0-0xAF, got 0x{:02X})",
             marker
