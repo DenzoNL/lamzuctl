@@ -442,20 +442,34 @@ pub mod set {
         Ok(())
     }
 
-    pub fn dpi(device_selector: Option<&str>, stage: u8) -> Result<()> {
+    pub fn dpi(device_selector: Option<&str>, value: u16) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
         let profile = controller.get_profile()?;
         let dpi_stages = controller.get_dpi_stages(profile, 6)?;
-        let max_stage = dpi_stages.len() as u8;
+        let max_stage = dpi_stages.len() as u16;
 
-        if stage < 1 || stage > max_stage {
-            anyhow::bail!(
-                "Invalid DPI stage: {}. Valid range is 1-{} ({} stages configured)",
-                stage,
-                max_stage,
-                max_stage
-            );
-        }
+        // A small number is a stage index; anything larger is a DPI value, which
+        // we resolve to the stage configured with it. The device only switches
+        // between preset stages, so a DPI value has to already be on a stage.
+        let stage = if value >= 1 && value <= max_stage {
+            value as u8
+        } else {
+            match dpi_stages.iter().position(|s| s.x == value && s.y == value) {
+                Some(idx) => (idx + 1) as u8,
+                None => {
+                    let available: Vec<String> =
+                        dpi_stages.iter().map(format_dpi).collect();
+                    anyhow::bail!(
+                        "No DPI stage set to {} in profile {}. Valid stages are 1-{}; \
+                         configured DPI values are: {}",
+                        value,
+                        profile,
+                        max_stage,
+                        available.join(", ")
+                    );
+                }
+            }
+        };
 
         controller.set_dpi_stage(profile, stage)?;
 
