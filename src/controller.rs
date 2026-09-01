@@ -52,8 +52,42 @@ impl DeviceController {
         Ok(())
     }
 
-    /// Send a command and get the response using feature reports
+    /// Send a command and get the response using feature reports.
+    ///
+    /// The device intermittently returns a stale or not-yet-ready response,
+    /// especially right after a write such as a profile switch. Such a response
+    /// carries a bad marker or an opcode echo that does not match the command we
+    /// just sent, which would otherwise be silently parsed as real data (e.g. a
+    /// polling rate of 0, making a configured profile look unconfigured).
+    /// So validate the echo and retry with a growing delay before giving up.
     fn send_and_receive(&self, command: &[u8; 64]) -> Result<Vec<u8>> {
+        const MAX_ATTEMPTS: u32 = 5;
+        let opcode = command[5];
+        let mut last: Option<Vec<u8>> = None;
+
+        for attempt in 0..MAX_ATTEMPTS {
+            let response = self.send_and_receive_once(command, 10 + attempt * 15)?;
+
+            // A valid response has a 0xA0-0xAF marker and echoes our opcode.
+            // The echo sits at [6] on the new protocol, [5] on the old one.
+            let marker = response.get(1).copied().unwrap_or(0);
+            let echo_new = response.get(6).copied().unwrap_or(0);
+            let echo_old = response.get(5).copied().unwrap_or(0);
+
+            if (0xA0..=0xAF).contains(&marker) && (echo_new == opcode || echo_old == opcode) {
+                return Ok(response);
+            }
+
+            last = Some(response);
+        }
+
+        // Return the last response rather than erroring here, so the existing
+        // per-command validation produces its usual error message.
+        last.context("Device not connected")
+    }
+
+    /// One send/receive round trip.
+    fn send_and_receive_once(&self, command: &[u8; 64], delay_ms: u32) -> Result<Vec<u8>> {
         let device = self.device.as_ref()
             .context("Device not connected")?;
 
@@ -67,7 +101,7 @@ impl DeviceController {
             .context("Failed to send feature report")?;
 
         // Give device time to process
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms as u64));
 
         // Get the response via Get Feature Report
         let mut recv_buf = [0u8; 65];
