@@ -418,16 +418,21 @@ pub mod set {
     pub fn profile(device_selector: Option<&str>, id: u8) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
 
-        // Validate profile ID before attempting to set
-        let configured_profiles = controller.get_configured_profiles()?;
-        let max_profile = configured_profiles.len() as u8;
-
-        if id < 1 || id > max_profile {
+        // Validate just the requested profile rather than enumerating every
+        // profile, which costs a HID round trip per setting per profile.
+        if id < 1 || id > lamzuctl::DEFAULT_PROFILE_COUNT {
             anyhow::bail!(
-                "Invalid profile ID: {}. Valid range is 1-{} ({} configured profiles)",
+                "Invalid profile ID: {}. Valid range is 1-{}",
                 id,
-                max_profile,
-                max_profile
+                lamzuctl::DEFAULT_PROFILE_COUNT
+            );
+        }
+
+        if !controller.get_profile_info(id)?.is_configured() {
+            anyhow::bail!(
+                "Profile {} is not configured on this device. Run `lamzuctl profiles` \
+                 to see the configured profiles.",
+                id
             );
         }
 
