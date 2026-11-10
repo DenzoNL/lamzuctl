@@ -6,18 +6,23 @@ pub const DEFAULT_PROFILE_COUNT: u8 = 5;
 /// Default number of DPI stages per profile on Lamzu mice
 pub const DEFAULT_DPI_STAGE_COUNT: u8 = 6;
 
-/// Error returned when the receiver answers but the mouse itself does not.
+/// Error for when the wireless mouse is not answering the dongle.
 ///
-/// A wireless dongle keeps answering HID requests while the mouse is asleep,
-/// switched off or out of range, but every value it returns is zero. Use
-/// `anyhow::Error::downcast_ref::<MouseNotResponding>()` to tell this apart
-/// from a real I/O failure.
+/// The dongle keeps acknowledging HID commands while the mouse is asleep,
+/// powered off, or out of range — but every mouse-sourced value reads zero
+/// (battery 0%, profile 0, firmware 0.0.0.0). Rather than passing those
+/// zeros off as real data, commands fail with this error so callers can tell
+/// "mouse asleep" apart from "battery genuinely empty". The CLI maps it to
+/// exit code 2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MouseNotResponding;
 
 impl std::fmt::Display for MouseNotResponding {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Mouse is not responding (asleep, switched off, or out of range)")
+        write!(
+            f,
+            "mouse is not responding (asleep, powered off, or out of range); move it to wake it"
+        )
     }
 }
 

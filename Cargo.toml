@@ -2,7 +2,7 @@
 name = "lamzuctl"
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 description = "Control utility and Stream Deck plugin for Lamzu gaming mice"
 license = "MIT"
 

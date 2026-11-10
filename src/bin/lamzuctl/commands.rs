@@ -118,7 +118,7 @@ pub fn info(device_selector: Option<&str>) -> Result<()> {
     let mut controller = DeviceController::new()?;
     controller.connect_path(&device.path)?;
 
-    let profile = controller.get_profile()?;
+    let profile = controller.active_profile()?;
     let configured_profiles = controller.get_configured_profiles()?;
     let polling_rate = controller.get_polling_rate(profile)?;
     let battery = controller.get_battery()?;
@@ -204,7 +204,7 @@ pub fn info(device_selector: Option<&str>) -> Result<()> {
 pub fn profiles(device_selector: Option<&str>) -> Result<()> {
     let controller = connect_to_device(device_selector)?;
 
-    let current_profile = controller.get_profile()?;
+    let current_profile = controller.active_profile()?;
     let profiles = controller.get_configured_profiles()?;
 
     println!("Profiles ({} configured):\n", profiles.len());
@@ -256,14 +256,28 @@ pub mod get {
 
     pub fn profile(device_selector: Option<&str>) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
-        let profile = controller.get_profile()?;
+        let profile = controller.active_profile()?;
         println!("Profile: {}", profile);
         Ok(())
     }
 
+    /// Report whether the mouse itself is answering the dongle.
+    ///
+    /// Prints "Mouse: responding" and exits 0, or fails with
+    /// MouseNotResponding (exit code 2) so scripts can poll the state.
+    pub fn status(device_selector: Option<&str>) -> Result<()> {
+        let controller = connect_to_device(device_selector)?;
+        if controller.is_mouse_responding()? {
+            println!("Mouse: responding");
+            Ok(())
+        } else {
+            Err(anyhow::Error::new(lamzuctl::MouseNotResponding))
+        }
+    }
+
     pub fn polling_rate(device_selector: Option<&str>) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
-        let profile = controller.get_profile()?;
+        let profile = controller.active_profile()?;
         let polling_rate = controller.get_polling_rate(profile)?;
         println!("Polling Rate: {} Hz", polling_rate);
         Ok(())
@@ -271,7 +285,7 @@ pub mod get {
 
     pub fn dpi(device_selector: Option<&str>) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
-        let profile = controller.get_profile()?;
+        let profile = controller.active_profile()?;
         let active_stage = controller.get_active_dpi_stage(profile)?;
         let dpi_stages = controller.get_dpi_stages(profile, DEFAULT_DPI_STAGE_COUNT)?;
         let colors = controller.get_dpi_colors(profile)?;
@@ -309,9 +323,15 @@ pub mod get {
 
     pub fn battery(device_selector: Option<&str>) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
-        // A sleeping mouse reports 0% battery; the profile query detects that case.
-        controller.get_profile()?;
-        let battery = controller.get_battery()?;
+        let mut battery = controller.get_battery()?;
+        if battery.percentage == 0 && !battery.charging {
+            // All-zero is also what the dongle reports while the mouse is
+            // asleep, or briefly while the device settles after a write from
+            // another process. Fail with MouseNotResponding when the mouse is
+            // unreachable; otherwise re-read to get past the transient.
+            controller.active_profile()?;
+            battery = controller.get_battery()?;
+        }
         if battery.charging {
             println!("Battery: {}% (charging)", battery.percentage);
         } else {
@@ -322,6 +342,8 @@ pub mod get {
 
     pub fn firmware(device_selector: Option<&str>) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
+        // A sleeping mouse reads firmware 0.0.0.0; report that state instead.
+        controller.active_profile()?;
         let mouse_version = controller.get_firmware_version()?;
         let dongle_version = controller.get_dongle_firmware_version()?;
         println!("Mouse Firmware:  {}", mouse_version);
@@ -331,7 +353,7 @@ pub mod get {
 
     pub fn sensor(device_selector: Option<&str>) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
-        let profile = controller.get_profile()?;
+        let profile = controller.active_profile()?;
         let settings = controller.get_sensor_settings(profile)?;
 
         println!("Sensor Settings (Profile {}):\n", profile);
@@ -369,7 +391,7 @@ pub mod get {
 
     pub fn debounce(device_selector: Option<&str>) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
-        let profile = controller.get_profile()?;
+        let profile = controller.active_profile()?;
         let debounce = controller.get_debounce_time(profile)?;
         println!("Debounce: {} ms", debounce);
         Ok(())
@@ -377,7 +399,7 @@ pub mod get {
 
     pub fn lod(device_selector: Option<&str>) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
-        let profile = controller.get_profile()?;
+        let profile = controller.active_profile()?;
         let lod = controller.get_lod(profile)?;
         println!("LOD: {} mm", lod);
         Ok(())
@@ -385,7 +407,7 @@ pub mod get {
 
     pub fn motion_sync(device_selector: Option<&str>) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
-        let profile = controller.get_profile()?;
+        let profile = controller.active_profile()?;
         let enabled = controller.get_motion_sync(profile)?;
         println!("Motion Sync: {}", if enabled { "On" } else { "Off" });
         Ok(())
@@ -393,7 +415,7 @@ pub mod get {
 
     pub fn angle_snap(device_selector: Option<&str>) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
-        let profile = controller.get_profile()?;
+        let profile = controller.active_profile()?;
         let enabled = controller.get_angle_snap(profile)?;
         println!("Angle Snap: {}", if enabled { "On" } else { "Off" });
         Ok(())
@@ -401,7 +423,7 @@ pub mod get {
 
     pub fn angle_tune(device_selector: Option<&str>) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
-        let profile = controller.get_profile()?;
+        let profile = controller.active_profile()?;
         let value = controller.get_angle_tune(profile)?;
         println!("Angle Tune: {}°", value);
         Ok(())
@@ -409,7 +431,7 @@ pub mod get {
 
     pub fn performance_mode(device_selector: Option<&str>) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
-        let profile = controller.get_profile()?;
+        let profile = controller.active_profile()?;
         let mode = controller.get_performance_mode(profile)?;
         println!("Performance Mode: {}", mode);
         Ok(())
@@ -423,21 +445,26 @@ pub mod set {
     pub fn profile(device_selector: Option<&str>, id: u8) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
 
-        // Validate profile ID before attempting to set. Configured profiles are
-        // not necessarily contiguous, so check membership rather than a range.
-        let configured: Vec<u8> = controller
-            .get_configured_profiles()?
-            .iter()
-            .map(|p| p.id)
-            .collect();
+        // A sleeping mouse would make every profile look unconfigured (and
+        // the write would be lost); report the state instead.
+        controller.active_profile()?;
 
-        if !configured.contains(&id) {
-            let list = configured
-                .iter()
-                .map(u8::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
-            anyhow::bail!("Invalid profile ID: {id}. Configured profiles: {list}");
+        // Validate just the requested profile rather than enumerating every
+        // profile, which costs a HID round trip per setting per profile.
+        if !(1..=lamzuctl::DEFAULT_PROFILE_COUNT).contains(&id) {
+            anyhow::bail!(
+                "Invalid profile ID: {}. Valid range is 1-{}",
+                id,
+                lamzuctl::DEFAULT_PROFILE_COUNT
+            );
+        }
+
+        if !controller.get_profile_info(id)?.is_configured() {
+            anyhow::bail!(
+                "Profile {} is not configured on this device. Run `lamzuctl profiles` \
+                 to see the configured profiles.",
+                id
+            );
         }
 
         controller.set_profile(id)?;
@@ -446,19 +473,39 @@ pub mod set {
         Ok(())
     }
 
-    pub fn dpi(device_selector: Option<&str>, stage: u8) -> Result<()> {
+    pub fn dpi(device_selector: Option<&str>, value: u16) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
-        let profile = controller.get_profile()?;
+        let profile = controller.active_profile()?;
         let dpi_stages = controller.get_dpi_stages(profile, DEFAULT_DPI_STAGE_COUNT)?;
-        let Some(dpi) = lamzuctl::stage_at(&dpi_stages, stage) else {
-            anyhow::bail!(
-                "Invalid DPI stage: {stage}. Valid range is 1-{max} ({max} stages configured)",
-                max = dpi_stages.len()
-            );
+        let max_stage = dpi_stages.len() as u16;
+
+        // A small number is a stage index; anything larger is a DPI value, which
+        // we resolve to the stage configured with it. The device only switches
+        // between preset stages, so a DPI value has to already be on a stage.
+        let stage = if (1..=max_stage).contains(&value) {
+            value as u8
+        } else {
+            match dpi_stages.iter().position(|s| s.x == value && s.y == value) {
+                Some(idx) => (idx + 1) as u8,
+                None => {
+                    let available: Vec<String> = dpi_stages.iter().map(format_dpi).collect();
+                    anyhow::bail!(
+                        "No DPI stage set to {} in profile {}. Valid stages are 1-{}; \
+                         configured DPI values are: {}",
+                        value,
+                        profile,
+                        max_stage,
+                        available.join(", ")
+                    );
+                }
+            }
         };
 
         controller.set_dpi_stage(profile, stage)?;
-        println!("DPI stage set to {stage} ({} DPI)", format_dpi(&dpi));
+        match lamzuctl::stage_at(&dpi_stages, stage) {
+            Some(dpi) => println!("DPI stage set to {stage} ({} DPI)", format_dpi(&dpi)),
+            None => println!("DPI stage set to {stage}"),
+        }
 
         Ok(())
     }

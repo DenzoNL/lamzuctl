@@ -166,7 +166,7 @@ impl DeviceManager {
 
             op(&controller)?;
 
-            let profile = controller.get_profile()?;
+            let profile = controller.active_profile()?;
             Ok(Reading {
                 device_name: device
                     .product_string

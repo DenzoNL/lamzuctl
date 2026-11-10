@@ -5,6 +5,7 @@ use hidapi::HidApi;
 use std::ffi::CString;
 
 use crate::device::list_devices;
+use crate::lock::DeviceLock;
 use crate::protocol::*;
 use crate::types::*;
 
@@ -12,13 +13,20 @@ use crate::types::*;
 pub struct DeviceController {
     api: HidApi,
     device: Option<hidapi::HidDevice>,
+    /// Advisory cross-process lock serializing HID transactions on this
+    /// device (see the `lock` module).
+    lock: Option<DeviceLock>,
 }
 
 impl DeviceController {
     /// Create a new device controller
     pub fn new() -> Result<Self> {
         let api = HidApi::new().context("Failed to initialize HID API")?;
-        Ok(Self { api, device: None })
+        Ok(Self {
+            api,
+            device: None,
+            lock: None,
+        })
     }
 
     /// Connect to the first available Lamzu device
@@ -46,12 +54,55 @@ impl DeviceController {
             .context("Failed to open device at specified path")?;
 
         self.device = Some(device);
+        self.lock = Some(DeviceLock::for_device(path));
         Ok(())
     }
 
-    /// Send a command and get the response using feature reports
+    /// Send a command and get the response using feature reports.
+    ///
+    /// The device intermittently returns a stale or not-yet-ready response,
+    /// especially right after a write such as a profile switch. Such a response
+    /// carries a bad marker or an opcode echo that does not match the command we
+    /// just sent, which would otherwise be silently parsed as real data (e.g. a
+    /// polling rate of 0, making a configured profile look unconfigured).
+    /// So validate the echo and retry with a growing delay before giving up.
     fn send_and_receive(&self, command: &[u8; 64]) -> Result<Vec<u8>> {
+        const MAX_ATTEMPTS: u32 = 5;
+        let opcode = command[5];
+        let mut last: Option<Vec<u8>> = None;
+
+        for attempt in 0..MAX_ATTEMPTS {
+            let response = self.send_and_receive_once(command, 10 + attempt * 15)?;
+
+            // A valid response has a 0xA0-0xAF marker and echoes our opcode.
+            // The echo sits at [6] on the new protocol, [5] on the old one.
+            let marker = response.get(1).copied().unwrap_or(0);
+            let echo_new = response.get(6).copied().unwrap_or(0);
+            let echo_old = response.get(5).copied().unwrap_or(0);
+
+            if (0xA0..=0xAF).contains(&marker) && (echo_new == opcode || echo_old == opcode) {
+                return Ok(response);
+            }
+
+            last = Some(response);
+        }
+
+        // Return the last response rather than erroring here, so the existing
+        // per-command validation produces its usual error message.
+        last.context("Device not connected")
+    }
+
+    /// One send/receive round trip.
+    fn send_and_receive_once(&self, command: &[u8; 64], delay_ms: u32) -> Result<Vec<u8>> {
         let device = self.device.as_ref().context("Device not connected")?;
+
+        // Serialize the whole round trip against other lamzuctl processes:
+        // a read landing between another process's send and receive would
+        // pick up the wrong response.
+        let _transaction = match &self.lock {
+            Some(lock) => Some(lock.transaction()?),
+            None => None,
+        };
 
         // Send the command via Set Feature Report
         // First byte must be Report ID (0x00)
@@ -64,7 +115,7 @@ impl DeviceController {
             .context("Failed to send feature report")?;
 
         // Give device time to process
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms as u64));
 
         // Get the response via Get Feature Report
         let mut recv_buf = [0u8; 65];
@@ -88,11 +139,39 @@ impl DeviceController {
         validate_response(&response)?;
 
         // Response: [0]=RptID, [1]=Marker, [2]=?, [3]=DevID, [4]=Len, [5]=Cat, [6]=Opcode, [7]=Profile
-        // Device returns 1-based profile ID. A wireless dongle answers with a success
-        // marker but all-zero data when the mouse itself is asleep or out of range.
-        match get_response_byte(&response, 7)? {
-            0 => Err(MouseNotResponding.into()),
-            profile => Ok(profile),
+        // Device returns 1-based profile ID, or 0 when the mouse is not answering
+        // the dongle (see `active_profile`).
+        get_response_byte(&response, 7)
+    }
+
+    /// Get the active profile, verifying that the mouse itself is answering.
+    ///
+    /// The dongle acknowledges commands even when the mouse is asleep or out
+    /// of range, reporting profile 0 — a value an awake mouse never returns
+    /// (profiles are 1-based). Profile 0 can also be a short transient while
+    /// the device settles after a write (possibly from another process), so
+    /// a zero reading is re-checked a few times before failing with
+    /// [`MouseNotResponding`].
+    pub fn active_profile(&self) -> Result<u8> {
+        const ATTEMPTS: u32 = 3;
+        for attempt in 1..=ATTEMPTS {
+            let profile = self.get_profile()?;
+            if profile != 0 {
+                return Ok(profile);
+            }
+            if attempt < ATTEMPTS {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+        Err(anyhow::Error::new(MouseNotResponding))
+    }
+
+    /// Check whether the mouse itself is answering (see [`Self::active_profile`]).
+    pub fn is_mouse_responding(&self) -> Result<bool> {
+        match self.active_profile() {
+            Ok(_) => Ok(true),
+            Err(err) if err.is::<MouseNotResponding>() => Ok(false),
+            Err(err) => Err(err),
         }
     }
 
@@ -205,7 +284,27 @@ impl DeviceController {
     }
 
     /// Get detailed information for a specific profile
+    ///
+    /// A read taken while the device is still settling (right after a profile
+    /// switch) can come back zeroed, which would make a configured profile look
+    /// unconfigured. Retry such a read a few times before believing it.
     pub fn get_profile_info(&self, profile_id: u8) -> Result<ProfileInfo> {
+        const MAX_ATTEMPTS: u32 = 3;
+
+        let mut info = self.read_profile_info(profile_id)?;
+        for _ in 1..MAX_ATTEMPTS {
+            if info.is_configured() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            info = self.read_profile_info(profile_id)?;
+        }
+
+        Ok(info)
+    }
+
+    /// One pass of reading a profile's settings, without retry.
+    fn read_profile_info(&self, profile_id: u8) -> Result<ProfileInfo> {
         let polling_rate = self.get_polling_rate(profile_id)?;
         let active_dpi_stage = self.get_active_dpi_stage(profile_id)?;
         let dpi_stages = self.get_dpi_stages(profile_id, DEFAULT_DPI_STAGE_COUNT)?;
@@ -255,6 +354,12 @@ impl DeviceController {
         let response = self.send_and_receive(&cmd)?;
         validate_response(&response)?;
 
+        // NOTE: A Maya X 8K answers this query with payload bytes
+        // 00 00 00 12 00 1c (mouse) / 00 00 00 12 00 37 b0 00 01 (dongle),
+        // so both parse to "0.0.0.18" under the layout below. The real
+        // version encoding on this hardware is unknown; the distinguishing
+        // data sits past the documented field (mouse 0x001c, dongle
+        // 0x37b0 0001). Do not trust equal readings as "same firmware".
         // Protocol detection from Lamzu source:
         // - response[6] == 0x81 -> new protocol (data at byte 7+)
         // - response[5] == 0x81 -> old protocol (data at byte 6+)
@@ -472,6 +577,11 @@ impl DeviceController {
         let response = self.send_and_receive(&cmd)?;
         validate_response(&response)?;
 
+        // A profile switch takes a moment to apply. Returning immediately lets
+        // the next command (often a separate process, e.g. a Stream Deck key)
+        // read stale data back.
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
         Ok(())
     }
 
@@ -507,7 +617,7 @@ impl DeviceController {
     /// This is a convenience method that combines getting the active profile,
     /// active DPI stage, and DPI stages to return the current DPI value.
     pub fn get_current_dpi(&self) -> Result<DpiStage> {
-        let profile = self.get_profile()?;
+        let profile = self.active_profile()?;
         let active_stage = self.get_active_dpi_stage(profile)?;
         let stages = self.get_dpi_stages(profile, DEFAULT_DPI_STAGE_COUNT)?;
 

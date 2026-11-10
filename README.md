@@ -56,24 +56,38 @@ Download the pre-built binary from [Releases](https://github.com/DenzoNL/lamzuct
 # List connected devices
 lamzuctl list
 
-# Show device overview (default command)
+# Show device info (profile, polling rate, DPI, battery, sensor settings)
 lamzuctl info
 
-# List configured profiles
+# List all profiles
 lamzuctl profiles
 
 # Switch to profile 2
 lamzuctl set profile 2
 
-# Set DPI stage 3 on current profile
+# Set DPI stage 3 on the current profile
 lamzuctl set dpi 3
+
+# Switch to whichever stage is set to 1600 DPI
+lamzuctl set dpi 1600
 
 # Show battery level
 lamzuctl get battery
 
 # Target a specific device (index from `list`, name substring, or PID)
 lamzuctl --device dongle info
+
+# Check whether the mouse is awake (see exit codes below)
+lamzuctl get status
 ```
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Error (no device, invalid argument, HID failure, ...) |
+| 2 | Mouse not responding — asleep, powered off, or out of range. The dongle still answers in this state but reports zeros for every mouse-sourced value, so it is reported separately instead of being shown as "Battery: 0%". |
 
 ### Stream Deck
 
@@ -86,7 +100,7 @@ lamzuctl --device dongle info
 
 ### Requirements
 
-- Rust 1.88+
+- Rust 1.89+
 - Windows 10+
 
 ### Build

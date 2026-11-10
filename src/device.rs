@@ -62,7 +62,11 @@ pub(crate) fn list_devices_raw() -> Result<Vec<DeviceInfo>> {
                 product_string: device.product_string().map(|s| s.to_string()),
                 manufacturer_string: device.manufacturer_string().map(|s| s.to_string()),
                 serial_number: device.serial_number().map(|s| s.to_string()),
-                interface_number: extract_interface_number(&path),
+                interface_number: device
+                    .interface_number()
+                    .try_into()
+                    .ok()
+                    .or_else(|| extract_interface_number(&path)),
                 usage_page: device.usage_page(),
                 usage: device.usage(),
                 path,
@@ -119,13 +123,13 @@ pub fn list_devices() -> Result<Vec<DeviceInfo>> {
 /// return all zeros, failing this check.
 fn probe_device(device: &DeviceInfo) -> bool {
     // The dongle returns a success marker even when the mouse isn't connected,
-    // but the profile will be 0, which `get_profile` reports as an error.
+    // but with profile 0. `connect_path` also takes the cross-process lock.
     DeviceController::new()
         .and_then(|mut c| {
             c.connect_path(&device.path)?;
-            c.get_profile()
+            c.is_mouse_responding()
         })
-        .is_ok()
+        .unwrap_or(false)
 }
 
 /// Select a device from the list based on a selector string
