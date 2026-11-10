@@ -18,10 +18,7 @@ impl DeviceController {
     /// Create a new device controller
     pub fn new() -> Result<Self> {
         let api = HidApi::new().context("Failed to initialize HID API")?;
-        Ok(Self {
-            api,
-            device: None,
-        })
+        Ok(Self { api, device: None })
     }
 
     /// Connect to the first available Lamzu device
@@ -41,10 +38,10 @@ impl DeviceController {
 
     /// Connect to a specific device by path
     pub fn connect_path(&mut self, path: &str) -> Result<()> {
-        let c_path = CString::new(path)
-            .context("Invalid path: contains null byte")?;
+        let c_path = CString::new(path).context("Invalid path: contains null byte")?;
 
-        let device = self.api
+        let device = self
+            .api
             .open_path(&c_path)
             .context("Failed to open device at specified path")?;
 
@@ -54,8 +51,7 @@ impl DeviceController {
 
     /// Send a command and get the response using feature reports
     fn send_and_receive(&self, command: &[u8; 64]) -> Result<Vec<u8>> {
-        let device = self.device.as_ref()
-            .context("Device not connected")?;
+        let device = self.device.as_ref().context("Device not connected")?;
 
         // Send the command via Set Feature Report
         // First byte must be Report ID (0x00)
@@ -63,7 +59,8 @@ impl DeviceController {
         send_buf[0] = 0x00; // Report ID
         send_buf[1..65].copy_from_slice(command);
 
-        device.send_feature_report(&send_buf)
+        device
+            .send_feature_report(&send_buf)
             .context("Failed to send feature report")?;
 
         // Give device time to process
@@ -73,7 +70,8 @@ impl DeviceController {
         let mut recv_buf = [0u8; 65];
         recv_buf[0] = 0x00; // Report ID
 
-        let len = device.get_feature_report(&mut recv_buf)
+        let len = device
+            .get_feature_report(&mut recv_buf)
             .context("Failed to get feature report")?;
 
         Ok(recv_buf[..len].to_vec())
@@ -90,8 +88,12 @@ impl DeviceController {
         validate_response(&response)?;
 
         // Response: [0]=RptID, [1]=Marker, [2]=?, [3]=DevID, [4]=Len, [5]=Cat, [6]=Opcode, [7]=Profile
-        // Device returns 1-based profile ID
-        get_response_byte(&response, 7)
+        // Device returns 1-based profile ID. A wireless dongle answers with a success
+        // marker but all-zero data when the mouse itself is asleep or out of range.
+        match get_response_byte(&response, 7)? {
+            0 => Err(MouseNotResponding.into()),
+            profile => Ok(profile),
+        }
     }
 
     /// Get battery status (percentage and charging state)
@@ -157,19 +159,19 @@ impl DeviceController {
         // Response: [0]=RptID, [1]=Marker, [2]=?, [3]=DevID, [4]=Len, [5]=Cat, [6]=Opcode, [7]=Profile, [8]=NumStages
         // DPI data starts at [9]: X_hi, X_lo, Y_hi, Y_lo for each stage
         let num_stages = get_response_byte(&response, 8)? as usize;
-        let mut stages = Vec::with_capacity(num_stages);
-        let data_start = 9;
-
-        for i in 0..num_stages {
-            let offset = data_start + i * 4;
-            // Ensure all 4 bytes are available for this stage
-            if offset + 3 >= response.len() {
-                break;
-            }
-            let x = u16::from_be_bytes([response[offset], response[offset + 1]]);
-            let y = u16::from_be_bytes([response[offset + 2], response[offset + 3]]);
-            stages.push(DpiStage { x, y });
-        }
+        // A truncated trailing stage (fewer than 4 bytes) is dropped.
+        let stages = response
+            .get(9..)
+            .unwrap_or_default()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .take(num_stages)
+            .map(|c| DpiStage {
+                x: u16::from_be_bytes([c[0], c[1]]),
+                y: u16::from_be_bytes([c[2], c[3]]),
+            })
+            .collect();
 
         Ok(stages)
     }
@@ -189,19 +191,15 @@ impl DeviceController {
         // Response contains RGB triplets after header
         // Header: [0]=RptID, [1]=Marker, [2]=?, [3]=DevID, [4]=Len, [5]=Cat, [6]=Opcode, [7]=Profile
         // Colors start at [8]: R, G, B for each stage
-        let mut colors = Vec::new();
-        let data_start = 8;
-
-        for i in 0..6 {
-            let offset = data_start + i * 3;
-            if offset + 2 < response.len() {
-                colors.push(RgbColor {
-                    r: response[offset],
-                    g: response[offset + 1],
-                    b: response[offset + 2],
-                });
-            }
-        }
+        let colors = response
+            .get(8..)
+            .unwrap_or_default()
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .take(usize::from(DEFAULT_DPI_STAGE_COUNT))
+            .map(|c| RgbColor::new(c[0], c[1], c[2]))
+            .collect();
 
         Ok(colors)
     }
@@ -260,38 +258,22 @@ impl DeviceController {
         // Protocol detection from Lamzu source:
         // - response[6] == 0x81 -> new protocol (data at byte 7+)
         // - response[5] == 0x81 -> old protocol (data at byte 6+)
-        // We only support new protocol, so response should have opcode echo at [6]
-        let (major, minor, patch, build) = if get_response_byte(&response, 6)? == OP_GET_FIRMWARE_VERSION {
-            // New protocol: [7]=major, [8]=minor, [9]=patch, [10]=build
-            (
-                get_response_byte(&response, 7)?,
-                get_response_byte(&response, 8)?,
-                get_response_byte(&response, 9)?,
-                get_response_byte(&response, 10)?,
-            )
-        } else if get_response_byte(&response, 5)? == OP_GET_FIRMWARE_VERSION {
-            // Old protocol detected - still parse it but warn
-            (
-                get_response_byte(&response, 6)?,
-                get_response_byte(&response, 7)?,
-                get_response_byte(&response, 8)?,
-                get_response_byte(&response, 9)?,
-            )
+        // New protocol: [7]=major, [8]=minor, [9]=patch, [10]=build.
+        // The old protocol shifts everything one byte to the left.
+        // Unknown formats fall back to the new-protocol positions.
+        let start = if get_response_byte(&response, 6)? != OP_GET_FIRMWARE_VERSION
+            && get_response_byte(&response, 5)? == OP_GET_FIRMWARE_VERSION
+        {
+            6
         } else {
-            // Unknown format, try new protocol positions
-            (
-                get_response_byte(&response, 7)?,
-                get_response_byte(&response, 8)?,
-                get_response_byte(&response, 9)?,
-                get_response_byte(&response, 10)?,
-            )
+            7
         };
 
         Ok(FirmwareVersion {
-            major,
-            minor,
-            patch,
-            build,
+            major: get_response_byte(&response, start)?,
+            minor: get_response_byte(&response, start + 1)?,
+            patch: get_response_byte(&response, start + 2)?,
+            build: get_response_byte(&response, start + 3)?,
         })
     }
 
@@ -529,19 +511,8 @@ impl DeviceController {
         let active_stage = self.get_active_dpi_stage(profile)?;
         let stages = self.get_dpi_stages(profile, DEFAULT_DPI_STAGE_COUNT)?;
 
-        stages
-            .get(active_stage as usize - 1)
-            .copied()
-            .ok_or_else(|| anyhow::anyhow!("Active DPI stage {} not found in stages list", active_stage))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_controller_creation() {
-        assert!(DeviceController::new().is_ok());
+        stage_at(&stages, active_stage).ok_or_else(|| {
+            anyhow::anyhow!("Active DPI stage {} not found in stages list", active_stage)
+        })
     }
 }

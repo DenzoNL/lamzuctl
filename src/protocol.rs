@@ -33,15 +33,22 @@ pub(crate) const OP_SET_PROFILE: u8 = 0x05;
 pub(crate) const OP_SET_ACTIVE_DPI: u8 = 0x02;
 
 /// Build a 64-byte command packet for the Lamzu protocol
-pub(crate) fn build_command(device_id: u8, payload_len: u8, category: u8, opcode: u8, params: &[u8]) -> [u8; 64] {
+///
+/// # Panics
+/// Panics if `params` is longer than 58 bytes (the space left after the header).
+pub(crate) fn build_command(
+    device_id: u8,
+    payload_len: u8,
+    category: u8,
+    opcode: u8,
+    params: &[u8],
+) -> [u8; 64] {
     let mut cmd = [0u8; 64];
     cmd[2] = device_id;
     cmd[3] = payload_len;
     cmd[4] = category;
     cmd[5] = opcode;
-    if !params.is_empty() {
-        cmd[6..6 + params.len()].copy_from_slice(params);
-    }
+    cmd[6..6 + params.len()].copy_from_slice(params);
     cmd
 }
 
@@ -51,7 +58,7 @@ pub(crate) fn validate_response(response: &[u8]) -> Result<()> {
     let marker = response.get(1).copied().unwrap_or(0);
 
     // Accept markers in range 0xA0-0xAF (160-175) as valid responses
-    if marker < 0xA0 || marker > 0xAF {
+    if !(0xA0..=0xAF).contains(&marker) {
         anyhow::bail!(
             "Device returned error response (expected 0xA0-0xAF, got 0x{:02X})",
             marker
@@ -64,7 +71,11 @@ pub(crate) fn validate_response(response: &[u8]) -> Result<()> {
 /// Get a byte from a response with bounds checking
 pub(crate) fn get_response_byte(response: &[u8], index: usize) -> Result<u8> {
     response.get(index).copied().ok_or_else(|| {
-        anyhow::anyhow!("Response too short: expected at least {} bytes, got {}", index + 1, response.len())
+        anyhow::anyhow!(
+            "Response too short: expected at least {} bytes, got {}",
+            index + 1,
+            response.len()
+        )
     })
 }
 
@@ -79,5 +90,50 @@ pub(crate) fn polling_rate_to_hz(raw: u8) -> u16 {
         0x40 => 4000,
         0x80 => 8000,
         _ => raw as u16,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_command_layout() {
+        let cmd = build_command(
+            DEVICE_ID_MOUSE,
+            0x02,
+            CATEGORY_CONFIG,
+            OP_SET_ACTIVE_DPI,
+            &[3, 4],
+        );
+        assert_eq!(
+            &cmd[..8],
+            &[
+                0,
+                0,
+                DEVICE_ID_MOUSE,
+                0x02,
+                CATEGORY_CONFIG,
+                OP_SET_ACTIVE_DPI,
+                3,
+                4
+            ]
+        );
+        assert!(cmd[8..].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn validate_response_markers() {
+        assert!(validate_response(&[0x00, 0xA0]).is_ok());
+        assert!(validate_response(&[0x00, 0xAF]).is_ok());
+        assert!(validate_response(&[0x00, 0x9F]).is_err());
+        assert!(validate_response(&[0x00, 0xB0]).is_err());
+        assert!(validate_response(&[]).is_err());
+    }
+
+    #[test]
+    fn response_byte_bounds() {
+        assert_eq!(get_response_byte(&[1, 2, 3], 2).unwrap(), 3);
+        assert!(get_response_byte(&[1, 2, 3], 3).is_err());
     }
 }

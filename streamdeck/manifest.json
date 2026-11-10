@@ -3,7 +3,7 @@
     "Name": "Lamzu Mouse Control",
     "Author": "DenzoNL",
     "Description": "Unofficial Stream Deck plugin for Lamzu gaming mice. Control profiles, DPI, and monitor battery.",
-    "Version": "1.0.0",
+    "Version": "1.1.0",
     "Icon": "icons/plugin",
     "CodePath": "bin/lamzu-streamdeck.exe",
     "OS": [

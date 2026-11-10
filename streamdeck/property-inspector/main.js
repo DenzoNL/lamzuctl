@@ -93,12 +93,26 @@ function populateDeviceSelector(devices) {
 // Update status display
 function updateStatus(state) {
     const statusEl = document.getElementById('status');
-    if (state.connected) {
-        statusEl.innerHTML = `<span class="status-connected">${state.deviceName}</span>` +
-            `<br>Profile: ${state.profile}, DPI Stage: ${state.dpiStage}` +
-            `<br>Battery: ${state.battery}%${state.charging ? ' (charging)' : ''}`;
+    const line = (text, className) => {
+        const el = document.createElement('div');
+        el.textContent = text;
+        if (className) el.className = className;
+        return el;
+    };
+
+    if (state.status === 'connected') {
+        statusEl.replaceChildren(
+            line(state.deviceName, 'status-connected'),
+            line(`Profile: ${state.profile}, DPI Stage: ${state.dpiStage}`),
+            line(`Battery: ${state.battery}%${state.charging ? ' (charging)' : ''}`)
+        );
+    } else if (state.status === 'asleep') {
+        statusEl.replaceChildren(
+            line(state.deviceName || 'Receiver found', 'status-connected'),
+            line('Mouse is asleep or out of range', 'status-disconnected')
+        );
     } else {
-        statusEl.innerHTML = '<span class="status-disconnected">Not connected</span>';
+        statusEl.replaceChildren(line('Not connected', 'status-disconnected'));
     }
 }
 

@@ -1,310 +1,194 @@
-//! Device Manager for Lamzu HID Communication
+//! Device access for the plugin.
 //!
-//! Handles persistent HID connection with reconnection logic.
+//! All HID I/O is blocking, so it runs on tokio's blocking pool. Each
+//! operation:
+//! - re-enumerates and opens the device, so unplug/replug and sleep/wake are
+//!   handled without any reconnect state machine;
+//! - is serialized through a lock, so two requests can never interleave
+//!   their feature reports;
+//! - is bounded by [`IO_TIMEOUT`], so a wedged HID call can't freeze the
+//!   plugin's event loop.
 
-use anyhow::{Context, Result};
-use lamzuctl::{BatteryStatus, DeviceController, DeviceInfo, DpiStage};
-use std::sync::Arc;
+use anyhow::{Context, Result, anyhow};
+use lamzuctl::{
+    BatteryStatus, DEFAULT_DPI_STAGE_COUNT, DeviceController, DpiStage, MouseNotResponding,
+};
+use std::sync::{Arc, Mutex, TryLockError};
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, RwLock};
 
-/// Events emitted by the device manager
-#[derive(Debug, Clone)]
-pub enum DeviceEvent {
-    Connected { device_name: String },
+const IO_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Whether we can talk to the mouse
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    /// No Lamzu device found, or it failed to open/respond
     Disconnected,
-    StateUpdated(DeviceState),
-    Error(String),
+    /// Receiver present, but the mouse is asleep / off / out of range
+    MouseAsleep,
+    /// Mouse is responding; the readings in [`DeviceState`] are live
+    Connected,
 }
 
-/// Cached device state
+/// Last known device state
 #[derive(Debug, Clone)]
 pub struct DeviceState {
-    pub connected: bool,
+    pub status: Status,
     pub device_name: String,
-    pub current_profile: u8,
-    pub current_dpi_stage: u8,
+    pub profile: u8,
+    pub dpi_stage: u8,
     pub dpi_stages: Vec<DpiStage>,
     pub battery: BatteryStatus,
-    pub last_update: Option<Instant>,
 }
 
 impl Default for DeviceState {
     fn default() -> Self {
         Self {
-            connected: false,
+            status: Status::Disconnected,
             device_name: String::new(),
-            current_profile: 1,
-            current_dpi_stage: 1,
+            profile: 0,
+            dpi_stage: 0,
             dpi_stages: Vec::new(),
             battery: BatteryStatus {
                 percentage: 0,
                 charging: false,
             },
-            last_update: None,
         }
     }
 }
 
-/// Manages the connection to a Lamzu device
+/// Live readings from one round-trip to the device
+struct Reading {
+    device_name: String,
+    profile: u8,
+    dpi_stage: u8,
+    dpi_stages: Vec<DpiStage>,
+    battery: BatteryStatus,
+}
+
 pub struct DeviceManager {
-    state: Arc<RwLock<DeviceState>>,
-    device_selector: Option<String>,
-    event_tx: mpsc::Sender<DeviceEvent>,
+    state: DeviceState,
+    last_refresh: Option<Instant>,
+    io_lock: Arc<Mutex<()>>,
 }
 
 impl DeviceManager {
-    pub fn new(event_tx: mpsc::Sender<DeviceEvent>) -> Self {
+    pub fn new() -> Self {
         Self {
-            state: Arc::new(RwLock::new(DeviceState::default())),
-            device_selector: None,
-            event_tx,
+            state: DeviceState::default(),
+            last_refresh: None,
+            io_lock: Arc::new(Mutex::new(())),
         }
     }
 
-    pub fn set_device_selector(&mut self, selector: Option<String>) {
-        self.device_selector = selector;
+    pub fn state(&self) -> &DeviceState {
+        &self.state
     }
 
-    pub fn state(&self) -> Arc<RwLock<DeviceState>> {
-        Arc::clone(&self.state)
+    /// True if the cached state is older than `max_age` (or was never read)
+    pub fn is_stale(&self, max_age: Duration) -> bool {
+        self.last_refresh.is_none_or(|t| t.elapsed() > max_age)
     }
 
-    /// Get the current cached state
-    pub async fn get_state(&self) -> DeviceState {
-        self.state.read().await.clone()
+    /// Re-read everything from the device. Failures are folded into
+    /// [`DeviceState::status`]; the returned error is for logging only.
+    pub async fn refresh(&mut self, selector: Option<String>) -> Result<()> {
+        let result = self.run(selector, |_| Ok(())).await;
+        self.absorb(result)
     }
 
-    /// Connect to the device and read initial state
-    pub async fn connect(&self) -> Result<()> {
-        // Device operations are blocking, run in spawn_blocking
-        let selector = self.device_selector.clone();
-        let (device_name, profile, dpi_stage, dpi_stages, battery) =
-            tokio::task::spawn_blocking(move || -> Result<_> {
-                let devices = lamzuctl::list_devices()?;
+    /// Switch profile, then re-read state (DPI stages differ per profile)
+    pub async fn set_profile(&mut self, selector: Option<String>, profile: u8) -> Result<()> {
+        let result = self.run(selector, move |c| c.set_profile(profile)).await;
+        self.absorb(result)
+    }
 
-                if devices.is_empty() {
-                    anyhow::bail!("No Lamzu devices found");
-                }
-
-                let device = lamzuctl::select_device(&devices, selector.as_deref())?;
-                let device_name = device
-                    .product_string
-                    .clone()
-                    .unwrap_or_else(|| "Unknown".to_string());
-
-                let mut controller = DeviceController::new()?;
-                controller.connect_path(&device.path)?;
-
-                let profile = controller.get_profile()?;
-                let dpi_stage = controller.get_active_dpi_stage(profile)?;
-                let dpi_stages = controller.get_dpi_stages(profile, 6)?;
-                let battery = controller.get_battery()?;
-
-                Ok((device_name, profile, dpi_stage, dpi_stages, battery))
-            })
-            .await
-            .context("Device task panicked")??;
-
-        // Update state
-        {
-            let mut state = self.state.write().await;
-            state.connected = true;
-            state.device_name = device_name.clone();
-            state.current_profile = profile;
-            state.current_dpi_stage = dpi_stage;
-            state.dpi_stages = dpi_stages;
-            state.battery = battery;
-            state.last_update = Some(Instant::now());
-        }
-
-        // Notify listeners
-        let _ = self
-            .event_tx
-            .send(DeviceEvent::Connected { device_name })
+    /// Switch DPI stage on the current profile, then re-read state
+    pub async fn set_dpi_stage(
+        &mut self,
+        selector: Option<String>,
+        profile: u8,
+        stage: u8,
+    ) -> Result<()> {
+        let result = self
+            .run(selector, move |c| c.set_dpi_stage(profile, stage))
             .await;
-
-        Ok(())
+        self.absorb(result)
     }
 
-    /// Execute a device operation with automatic reconnection
-    async fn with_device<F, T>(&self, op: F) -> Result<T>
-    where
-        F: FnOnce(&DeviceController) -> Result<T> + Send + 'static,
-        T: Send + 'static,
-    {
-        let selector = self.device_selector.clone();
-
-        let result = tokio::task::spawn_blocking(move || -> Result<T> {
-            let devices = lamzuctl::list_devices()?;
-
-            if devices.is_empty() {
-                anyhow::bail!("No Lamzu devices found");
+    /// Fold an operation's result into the cached state
+    fn absorb(&mut self, result: Result<Reading>) -> Result<()> {
+        self.last_refresh = Some(Instant::now());
+        match result {
+            Ok(r) => {
+                self.state = DeviceState {
+                    status: Status::Connected,
+                    device_name: r.device_name,
+                    profile: r.profile,
+                    dpi_stage: r.dpi_stage,
+                    dpi_stages: r.dpi_stages,
+                    battery: r.battery,
+                };
+                Ok(())
             }
-
-            let device = lamzuctl::select_device(&devices, selector.as_deref())?;
-            let mut controller = DeviceController::new()?;
-            controller.connect_path(&device.path)?;
-
-            op(&controller)
-        })
-        .await
-        .context("Device task panicked")??;
-
-        Ok(result)
-    }
-
-    /// Set the active profile
-    pub async fn set_profile(&self, profile_id: u8) -> Result<()> {
-        self.with_device(move |controller| controller.set_profile(profile_id))
-            .await?;
-
-        // Update cached state
-        {
-            let mut state = self.state.write().await;
-            state.current_profile = profile_id;
+            Err(e) => {
+                self.state.status = if e.downcast_ref::<MouseNotResponding>().is_some() {
+                    Status::MouseAsleep
+                } else {
+                    Status::Disconnected
+                };
+                Err(e)
+            }
         }
-
-        let _ = self
-            .event_tx
-            .send(DeviceEvent::StateUpdated(self.get_state().await))
-            .await;
-
-        Ok(())
     }
 
-    /// Set the active DPI stage
-    pub async fn set_dpi_stage(&self, profile_id: u8, stage: u8) -> Result<()> {
-        self.with_device(move |controller| controller.set_dpi_stage(profile_id, stage))
-            .await?;
+    /// Open the device, run `op`, then read back the full state, all on the
+    /// blocking pool under the I/O lock and with a timeout.
+    async fn run<F>(&self, selector: Option<String>, op: F) -> Result<Reading>
+    where
+        F: FnOnce(&DeviceController) -> Result<()> + Send + 'static,
+    {
+        let io_lock = Arc::clone(&self.io_lock);
+        let task = tokio::task::spawn_blocking(move || {
+            // If a previous call is still stuck in the driver, fail fast
+            // instead of queueing up more blocked threads behind it.
+            let _guard = match io_lock.try_lock() {
+                Ok(g) => g,
+                Err(TryLockError::Poisoned(p)) => p.into_inner(),
+                Err(TryLockError::WouldBlock) => {
+                    return Err(anyhow!("device busy: a previous request has not finished"));
+                }
+            };
 
-        // Update cached state and refresh DPI values
-        let selector = self.device_selector.clone();
-        let (dpi_stage, dpi_stages) = tokio::task::spawn_blocking(move || -> Result<_> {
             let devices = lamzuctl::list_devices()?;
             let device = lamzuctl::select_device(&devices, selector.as_deref())?;
             let mut controller = DeviceController::new()?;
             controller.connect_path(&device.path)?;
 
-            let dpi_stage = controller.get_active_dpi_stage(profile_id)?;
-            let dpi_stages = controller.get_dpi_stages(profile_id, 6)?;
+            op(&controller)?;
 
-            Ok((dpi_stage, dpi_stages))
-        })
-        .await
-        .context("Device task panicked")??;
-
-        {
-            let mut state = self.state.write().await;
-            state.current_dpi_stage = dpi_stage;
-            state.dpi_stages = dpi_stages;
-        }
-
-        let _ = self
-            .event_tx
-            .send(DeviceEvent::StateUpdated(self.get_state().await))
-            .await;
-
-        Ok(())
-    }
-
-    /// Refresh battery status
-    pub async fn refresh_battery(&self) -> Result<BatteryStatus> {
-        let battery = self
-            .with_device(|controller| controller.get_battery())
-            .await?;
-
-        {
-            let mut state = self.state.write().await;
-            state.battery = battery;
-            state.last_update = Some(Instant::now());
-        }
-
-        let _ = self
-            .event_tx
-            .send(DeviceEvent::StateUpdated(self.get_state().await))
-            .await;
-
-        Ok(battery)
-    }
-
-    /// Refresh all device state
-    pub async fn refresh_state(&self) -> Result<DeviceState> {
-        let selector = self.device_selector.clone();
-
-        let (device_name, profile, dpi_stage, dpi_stages, battery) =
-            tokio::task::spawn_blocking(move || -> Result<_> {
-                let devices = lamzuctl::list_devices()?;
-
-                if devices.is_empty() {
-                    anyhow::bail!("No Lamzu devices found");
-                }
-
-                let device = lamzuctl::select_device(&devices, selector.as_deref())?;
-                let device_name = device
+            let profile = controller.get_profile()?;
+            Ok(Reading {
+                device_name: device
                     .product_string
                     .clone()
-                    .unwrap_or_else(|| "Unknown".to_string());
-
-                let mut controller = DeviceController::new()?;
-                controller.connect_path(&device.path)?;
-
-                let profile = controller.get_profile()?;
-                let dpi_stage = controller.get_active_dpi_stage(profile)?;
-                let dpi_stages = controller.get_dpi_stages(profile, 6)?;
-                let battery = controller.get_battery()?;
-
-                Ok((device_name, profile, dpi_stage, dpi_stages, battery))
+                    .unwrap_or_else(|| format!("Lamzu {:04x}", device.product_id)),
+                profile,
+                dpi_stage: controller.get_active_dpi_stage(profile)?,
+                dpi_stages: controller.get_dpi_stages(profile, DEFAULT_DPI_STAGE_COUNT)?,
+                battery: controller.get_battery()?,
             })
+        });
+
+        tokio::time::timeout(IO_TIMEOUT, task)
             .await
-            .context("Device task panicked")??;
-
-        let new_state = {
-            let mut state = self.state.write().await;
-            state.connected = true;
-            state.device_name = device_name;
-            state.current_profile = profile;
-            state.current_dpi_stage = dpi_stage;
-            state.dpi_stages = dpi_stages;
-            state.battery = battery;
-            state.last_update = Some(Instant::now());
-            state.clone()
-        };
-
-        let _ = self
-            .event_tx
-            .send(DeviceEvent::StateUpdated(new_state.clone()))
-            .await;
-
-        Ok(new_state)
-    }
-
-    /// List available devices
-    pub async fn list_devices() -> Result<Vec<DeviceInfo>> {
-        tokio::task::spawn_blocking(|| lamzuctl::list_devices())
-            .await
-            .context("Device task panicked")?
+            .map_err(|_| anyhow!("device did not respond within {}s", IO_TIMEOUT.as_secs()))?
+            .context("device task panicked")?
     }
 }
 
-/// Battery polling task
-pub async fn battery_poll_task(
-    device_manager: Arc<DeviceManager>,
-    mut stop_rx: mpsc::Receiver<()>,
-    poll_interval: Duration,
-) {
-    let mut interval = tokio::time::interval(poll_interval);
-
-    loop {
-        tokio::select! {
-            _ = interval.tick() => {
-                if let Err(e) = device_manager.refresh_battery().await {
-                    eprintln!("Battery poll failed: {}", e);
-                }
-            }
-            _ = stop_rx.recv() => {
-                break;
-            }
-        }
-    }
+/// List devices for the Property Inspector's device dropdown
+pub async fn list_devices() -> Result<Vec<lamzuctl::DeviceInfo>> {
+    tokio::task::spawn_blocking(lamzuctl::list_devices)
+        .await
+        .context("device task panicked")?
 }

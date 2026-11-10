@@ -2,10 +2,9 @@
 
 use anyhow::{Context, Result};
 use hidapi::HidApi;
-use std::ffi::CString;
 
+use crate::controller::DeviceController;
 use crate::device_db::is_lamzu_vendor;
-use crate::protocol::{CATEGORY_GENERAL, DEVICE_ID_MOUSE, OP_GET_PROFILE};
 
 /// Information about a detected device
 #[derive(Debug, Clone)]
@@ -38,10 +37,10 @@ fn extract_interface_number(path: &str) -> Option<u8> {
     if let Some(mi_pos) = path_upper.find("MI_") {
         let after_mi = &path_upper[mi_pos + 3..];
         // Extract the two hex digits after MI_
-        if after_mi.len() >= 2 {
-            if let Ok(num) = u8::from_str_radix(&after_mi[..2], 16) {
-                return Some(num);
-            }
+        if after_mi.len() >= 2
+            && let Ok(num) = u8::from_str_radix(&after_mi[..2], 16)
+        {
+            return Some(num);
         }
     }
     None
@@ -119,56 +118,14 @@ pub fn list_devices() -> Result<Vec<DeviceInfo>> {
 /// connected but not in use (e.g., dongle when mouse is in wired mode) will
 /// return all zeros, failing this check.
 fn probe_device(device: &DeviceInfo) -> bool {
-    let api = match HidApi::new() {
-        Ok(api) => api,
-        Err(_) => return false,
-    };
-
-    let c_path = match CString::new(device.path.as_str()) {
-        Ok(p) => p,
-        Err(_) => return false,
-    };
-
-    let hid_device = match api.open_path(&c_path) {
-        Ok(d) => d,
-        Err(_) => return false,
-    };
-
-    // Build get_profile command (same as build_command but with report ID prefix)
-    // Command format: [0]=ReportID, [1..65]=command data
-    // Command data: [2]=DeviceID, [3]=PayloadLen, [4]=Category, [5]=Opcode
-    let mut send_buf = [0u8; 65];
-    send_buf[0] = 0x00; // Report ID
-    // Offsets +1 because of report ID prefix
-    send_buf[1 + 2] = DEVICE_ID_MOUSE; // [3] in send_buf = device_id
-    send_buf[1 + 3] = 0x01;            // [4] = payload_len
-    send_buf[1 + 4] = CATEGORY_GENERAL; // [5] = category
-    send_buf[1 + 5] = OP_GET_PROFILE;  // [6] = opcode
-
-    if hid_device.send_feature_report(&send_buf).is_err() {
-        return false;
-    }
-
-    std::thread::sleep(std::time::Duration::from_millis(10));
-
-    let mut recv_buf = [0u8; 65];
-    recv_buf[0] = 0x00;
-
-    let len = match hid_device.get_feature_report(&mut recv_buf) {
-        Ok(l) => l,
-        Err(_) => return false,
-    };
-
-    if len < 8 {
-        return false;
-    }
-
-    // Response: [0]=RptID, [1]=Marker (0xA0-0xAF = success), [7]=Profile
-    // The dongle returns success marker (0xA0) even when mouse isn't connected,
-    // but the profile will be 0. A valid profile is 1-5.
-    let marker = recv_buf[1];
-    let profile = recv_buf[7];
-    (0xA0..=0xAF).contains(&marker) && profile > 0
+    // The dongle returns a success marker even when the mouse isn't connected,
+    // but the profile will be 0, which `get_profile` reports as an error.
+    DeviceController::new()
+        .and_then(|mut c| {
+            c.connect_path(&device.path)?;
+            c.get_profile()
+        })
+        .is_ok()
 }
 
 /// Select a device from the list based on a selector string
@@ -192,16 +149,19 @@ pub fn select_device<'a>(
         Some(sel) => {
             // Try index (1-based)
             if let Ok(idx) = sel.parse::<usize>() {
-                return devices.get(idx - 1).ok_or_else(|| {
-                    anyhow::anyhow!("Device index {} out of range (1-{})", idx, devices.len())
-                });
+                return idx
+                    .checked_sub(1)
+                    .and_then(|i| devices.get(i))
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Device index {} out of range (1-{})", idx, devices.len())
+                    });
             }
             // Try PID (hex)
             let sel_clean = sel.trim_start_matches("0x").trim_start_matches("0X");
-            if let Ok(pid) = u16::from_str_radix(sel_clean, 16) {
-                if let Some(d) = devices.iter().find(|d| d.product_id == pid) {
-                    return Ok(d);
-                }
+            if let Ok(pid) = u16::from_str_radix(sel_clean, 16)
+                && let Some(d) = devices.iter().find(|d| d.product_id == pid)
+            {
+                return Ok(d);
             }
             // Try name substring (case-insensitive)
             let sel_lower = sel.to_lowercase();
@@ -216,18 +176,64 @@ pub fn select_device<'a>(
             anyhow::bail!("No device matching '{}' found", sel);
         }
         None => {
-            if devices.len() > 1 {
-                // Multiple devices - probe to find one that responds
-                let mut selected_idx = 0;
-                for (i, device) in devices.iter().enumerate() {
-                    if probe_device(device) {
-                        selected_idx = i;
-                        break;
-                    }
-                }
-                return Ok(&devices[selected_idx]);
+            // With multiple devices (e.g. wired + dongle), prefer the one that
+            // actually responds; otherwise fall back to the first.
+            if devices.len() > 1
+                && let Some(d) = devices.iter().find(|d| probe_device(d))
+            {
+                return Ok(d);
             }
             Ok(&devices[0])
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dev(pid: u16, name: &str) -> DeviceInfo {
+        DeviceInfo {
+            vendor_id: 0x373E,
+            product_id: pid,
+            product_string: Some(name.to_string()),
+            manufacturer_string: None,
+            serial_number: None,
+            path: String::new(),
+            interface_number: Some(2),
+            usage_page: 0,
+            usage: 0,
+        }
+    }
+
+    #[test]
+    fn interface_number_from_path() {
+        let path = r"\?\HID#VID_373E&PID_001E&MI_02#9&189fb621&0&0000#{4d1e55b2}";
+        assert_eq!(extract_interface_number(path), Some(2));
+        assert_eq!(
+            extract_interface_number(r"\?\HID#VID_373E&PID_001E#x"),
+            None
+        );
+    }
+
+    #[test]
+    fn select_by_index_name_and_pid() {
+        let devices = [dev(0x001C, "Maya X Wired"), dev(0x001E, "Maya X 8K Dongle")];
+        assert_eq!(
+            select_device(&devices, Some("2")).unwrap().product_id,
+            0x001E
+        );
+        assert!(select_device(&devices, Some("0")).is_err());
+        assert!(select_device(&devices, Some("3")).is_err());
+        assert_eq!(
+            select_device(&devices, Some("dongle")).unwrap().product_id,
+            0x001E
+        );
+        assert_eq!(
+            select_device(&devices, Some("0x001c")).unwrap().product_id,
+            0x001C
+        );
+        assert!(select_device(&devices, Some("nothing")).is_err());
+        assert!(select_device(&[], None).is_err());
     }
 }

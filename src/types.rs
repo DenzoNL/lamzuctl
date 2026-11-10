@@ -6,6 +6,23 @@ pub const DEFAULT_PROFILE_COUNT: u8 = 5;
 /// Default number of DPI stages per profile on Lamzu mice
 pub const DEFAULT_DPI_STAGE_COUNT: u8 = 6;
 
+/// Error returned when the receiver answers but the mouse itself does not.
+///
+/// A wireless dongle keeps answering HID requests while the mouse is asleep,
+/// switched off or out of range, but every value it returns is zero. Use
+/// `anyhow::Error::downcast_ref::<MouseNotResponding>()` to tell this apart
+/// from a real I/O failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MouseNotResponding;
+
+impl std::fmt::Display for MouseNotResponding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Mouse is not responding (asleep, switched off, or out of range)")
+    }
+}
+
+impl std::error::Error for MouseNotResponding {}
+
 /// Battery status information
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -46,7 +63,7 @@ impl RgbColor {
 
     /// Convert to hex string (e.g., "#FF0000")
     pub fn to_hex(&self) -> String {
-        format!("#{:02X}{:02X}{:02X}", self.r, self.g, self.b)
+        self.to_string()
     }
 }
 
@@ -89,7 +106,11 @@ pub struct FirmwareVersion {
 
 impl std::fmt::Display for FirmwareVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}.{}.{}", self.major, self.minor, self.patch, self.build)
+        write!(
+            f,
+            "{}.{}.{}.{}",
+            self.major, self.minor, self.patch, self.build
+        )
     }
 }
 
@@ -136,5 +157,36 @@ impl ProfileInfo {
     /// or no DPI stages defined.
     pub fn is_configured(&self) -> bool {
         self.polling_rate > 0 && !self.dpi_stages.is_empty()
+    }
+
+    /// The DPI values of the active stage, if the active stage index is valid
+    pub fn active_dpi(&self) -> Option<DpiStage> {
+        stage_at(&self.dpi_stages, self.active_dpi_stage)
+    }
+}
+
+/// Look up a 1-based DPI stage number in a list of stages.
+///
+/// Returns `None` for stage 0 (what a sleeping mouse reports) or an out-of-range stage.
+pub fn stage_at(stages: &[DpiStage], stage: u8) -> Option<DpiStage> {
+    stages.get(usize::from(stage).checked_sub(1)?).copied()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stage_at_is_one_based_and_safe() {
+        let stages = [DpiStage { x: 400, y: 400 }, DpiStage { x: 800, y: 800 }];
+        assert_eq!(stage_at(&stages, 0).map(|s| s.x), None);
+        assert_eq!(stage_at(&stages, 1).map(|s| s.x), Some(400));
+        assert_eq!(stage_at(&stages, 2).map(|s| s.x), Some(800));
+        assert_eq!(stage_at(&stages, 3).map(|s| s.x), None);
+    }
+
+    #[test]
+    fn rgb_hex() {
+        assert_eq!(RgbColor::new(255, 0, 16).to_hex(), "#FF0010");
     }
 }

@@ -1,13 +1,15 @@
 [package]
 name = "lamzuctl"
-version = "0.1.0"
-edition = "2021"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Control utility and Stream Deck plugin for Lamzu gaming mice"
+license = "MIT"
 
 [features]
 default = []
 serde = ["dep:serde"]
 streamdeck = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:serde_json", "dep:base64", "serde"]
-gui = ["dep:eframe", "dep:egui"]
 
 [dependencies]
 # Serialization (optional)
@@ -15,29 +17,25 @@ serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 
 # HID device communication
-hidapi = "2.6"
+hidapi = "2.6.7"
 
 # CLI argument parsing
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.6", features = ["derive"] }
 
 # Error handling
-anyhow = "1.0"
+anyhow = "1.0.100"
 
 # Colored terminal output
-colored = "2"
+colored = "3"
 
 # Table formatting
-comfy-table = "7"
+comfy-table = "8"
 
 # Stream Deck plugin dependencies (optional)
-tokio = { version = "1", features = ["full"], optional = true }
-tokio-tungstenite = { version = "0.24", optional = true }
+tokio = { version = "1.54", features = ["rt", "macros", "time"], optional = true }
+tokio-tungstenite = { version = "0.30", optional = true }
 futures-util = { version = "0.3", optional = true }
-base64 = { version = "0.22", optional = true }
-
-# GUI dependencies (optional)
-eframe = { version = "0.30", optional = true }
-egui = { version = "0.30", optional = true }
+base64 = { version = "0.23", optional = true }
 
 [lib]
 name = "lamzuctl"
@@ -52,7 +50,6 @@ name = "lamzu-streamdeck"
 path = "src/bin/lamzu_streamdeck/main.rs"
 required-features = ["streamdeck"]
 
-[[bin]]
-name = "lamzuctl-gui"
-path = "src/bin/lamzuctl_gui/main.rs"
-required-features = ["gui"]
+[profile.release]
+lto = "thin"
+strip = true

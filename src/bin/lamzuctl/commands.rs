@@ -2,8 +2,8 @@
 
 use anyhow::Result;
 use colored::Colorize;
-use comfy_table::{presets::NOTHING, Attribute, Cell, Color, Table};
-use lamzuctl::DeviceController;
+use comfy_table::{Attribute, Cell, Color, Table, presets::NOTHING};
+use lamzuctl::{DEFAULT_DPI_STAGE_COUNT, DeviceController};
 
 /// Connect to a device and return the controller
 pub fn connect_to_device(selector: Option<&str>) -> Result<DeviceController> {
@@ -19,7 +19,7 @@ pub fn connect_to_device(selector: Option<&str>) -> Result<DeviceController> {
 /// Helper to create a key-value table with no borders
 fn kv_table() -> Table {
     let mut table = Table::new();
-    table.load_preset(NOTHING);
+    table.load_style(NOTHING);
     table.set_content_arrangement(comfy_table::ContentArrangement::Dynamic);
     table
 }
@@ -47,7 +47,7 @@ pub fn list() -> Result<()> {
         let mut table = kv_table();
 
         if let Some(known) = known_device {
-            table.add_row(vec!["Model", &known.name]);
+            table.add_row(vec!["Model", known.name]);
         }
 
         table.add_row(vec![
@@ -123,7 +123,7 @@ pub fn info(device_selector: Option<&str>) -> Result<()> {
     let polling_rate = controller.get_polling_rate(profile)?;
     let battery = controller.get_battery()?;
     let active_stage = controller.get_active_dpi_stage(profile)?;
-    let dpi_stages = controller.get_dpi_stages(profile, 6)?;
+    let dpi_stages = controller.get_dpi_stages(profile, DEFAULT_DPI_STAGE_COUNT)?;
     let colors = controller.get_dpi_colors(profile)?;
     let mouse_fw = controller.get_firmware_version()?;
     let dongle_fw = controller.get_dongle_firmware_version()?;
@@ -152,7 +152,7 @@ pub fn info(device_selector: Option<&str>) -> Result<()> {
 
     // DPI stages table
     let mut dpi_table = Table::new();
-    dpi_table.load_preset(NOTHING);
+    dpi_table.load_style(NOTHING);
     dpi_table.set_header(vec![
         Cell::new("Stage").add_attribute(Attribute::Bold),
         Cell::new("DPI").add_attribute(Attribute::Bold),
@@ -202,11 +202,7 @@ pub fn info(device_selector: Option<&str>) -> Result<()> {
 
 /// List all profiles
 pub fn profiles(device_selector: Option<&str>) -> Result<()> {
-    let devices = lamzuctl::list_devices()?;
-    let device = lamzuctl::select_device(&devices, device_selector)?;
-
-    let mut controller = DeviceController::new()?;
-    controller.connect_path(&device.path)?;
+    let controller = connect_to_device(device_selector)?;
 
     let current_profile = controller.get_profile()?;
     let profiles = controller.get_configured_profiles()?;
@@ -214,7 +210,7 @@ pub fn profiles(device_selector: Option<&str>) -> Result<()> {
     println!("Profiles ({} configured):\n", profiles.len());
 
     let mut table = Table::new();
-    table.load_preset(NOTHING);
+    table.load_style(NOTHING);
     table.set_header(vec![
         Cell::new("Profile").add_attribute(Attribute::Bold),
         Cell::new("Polling").add_attribute(Attribute::Bold),
@@ -230,8 +226,11 @@ pub fn profiles(device_selector: Option<&str>) -> Result<()> {
             ""
         };
 
-        let active_dpi = profile.dpi_stages.get(profile.active_dpi_stage as usize - 1);
-        let dpi_text = active_dpi.map(format_dpi).unwrap_or_default();
+        let dpi_text = profile
+            .active_dpi()
+            .as_ref()
+            .map(format_dpi)
+            .unwrap_or_default();
 
         table.add_row(vec![
             Cell::new(profile.id),
@@ -274,13 +273,13 @@ pub mod get {
         let controller = connect_to_device(device_selector)?;
         let profile = controller.get_profile()?;
         let active_stage = controller.get_active_dpi_stage(profile)?;
-        let dpi_stages = controller.get_dpi_stages(profile, 6)?;
+        let dpi_stages = controller.get_dpi_stages(profile, DEFAULT_DPI_STAGE_COUNT)?;
         let colors = controller.get_dpi_colors(profile)?;
 
         println!("DPI Configuration (Profile {}):\n", profile);
 
         let mut table = Table::new();
-        table.load_preset(NOTHING);
+        table.load_style(NOTHING);
         table.set_header(vec![
             Cell::new("Stage").add_attribute(Attribute::Bold),
             Cell::new("DPI").add_attribute(Attribute::Bold),
@@ -310,6 +309,8 @@ pub mod get {
 
     pub fn battery(device_selector: Option<&str>) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
+        // A sleeping mouse reports 0% battery; the profile query detects that case.
+        controller.get_profile()?;
         let battery = controller.get_battery()?;
         if battery.charging {
             println!("Battery: {}% (charging)", battery.percentage);
@@ -353,7 +354,11 @@ pub mod get {
         table.add_row(vec!["Performance", &settings.performance_mode.to_string()]);
         table.add_row(vec![
             "20K FPS",
-            if settings.extreme_20k_fps { "On" } else { "Off" },
+            if settings.extreme_20k_fps {
+                "On"
+            } else {
+                "Off"
+            },
         ]);
         table.add_row(vec!["Debounce", &format!("{} ms", settings.debounce_ms)]);
 
@@ -418,17 +423,21 @@ pub mod set {
     pub fn profile(device_selector: Option<&str>, id: u8) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
 
-        // Validate profile ID before attempting to set
-        let configured_profiles = controller.get_configured_profiles()?;
-        let max_profile = configured_profiles.len() as u8;
+        // Validate profile ID before attempting to set. Configured profiles are
+        // not necessarily contiguous, so check membership rather than a range.
+        let configured: Vec<u8> = controller
+            .get_configured_profiles()?
+            .iter()
+            .map(|p| p.id)
+            .collect();
 
-        if id < 1 || id > max_profile {
-            anyhow::bail!(
-                "Invalid profile ID: {}. Valid range is 1-{} ({} configured profiles)",
-                id,
-                max_profile,
-                max_profile
-            );
+        if !configured.contains(&id) {
+            let list = configured
+                .iter()
+                .map(u8::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            anyhow::bail!("Invalid profile ID: {id}. Configured profiles: {list}");
         }
 
         controller.set_profile(id)?;
@@ -440,30 +449,16 @@ pub mod set {
     pub fn dpi(device_selector: Option<&str>, stage: u8) -> Result<()> {
         let controller = connect_to_device(device_selector)?;
         let profile = controller.get_profile()?;
-        let dpi_stages = controller.get_dpi_stages(profile, 6)?;
-        let max_stage = dpi_stages.len() as u8;
-
-        if stage < 1 || stage > max_stage {
+        let dpi_stages = controller.get_dpi_stages(profile, DEFAULT_DPI_STAGE_COUNT)?;
+        let Some(dpi) = lamzuctl::stage_at(&dpi_stages, stage) else {
             anyhow::bail!(
-                "Invalid DPI stage: {}. Valid range is 1-{} ({} stages configured)",
-                stage,
-                max_stage,
-                max_stage
+                "Invalid DPI stage: {stage}. Valid range is 1-{max} ({max} stages configured)",
+                max = dpi_stages.len()
             );
-        }
+        };
 
         controller.set_dpi_stage(profile, stage)?;
-
-        // Show confirmation with the DPI value
-        if let Some(dpi) = dpi_stages.get(stage as usize - 1) {
-            if dpi.x == dpi.y {
-                println!("DPI stage set to {} ({} DPI)", stage, dpi.x);
-            } else {
-                println!("DPI stage set to {} ({}x{} DPI)", stage, dpi.x, dpi.y);
-            }
-        } else {
-            println!("DPI stage set to {}", stage);
-        }
+        println!("DPI stage set to {stage} ({} DPI)", format_dpi(&dpi));
 
         Ok(())
     }

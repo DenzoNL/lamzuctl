@@ -56,17 +56,23 @@ Download the pre-built binary from [Releases](https://github.com/DenzoNL/lamzuct
 # List connected devices
 lamzuctl list
 
-# Show current status
-lamzuctl status
+# Show device overview (default command)
+lamzuctl info
+
+# List configured profiles
+lamzuctl profiles
 
 # Switch to profile 2
-lamzuctl profile set 2
+lamzuctl set profile 2
 
 # Set DPI stage 3 on current profile
-lamzuctl dpi stage 3
+lamzuctl set dpi 3
 
 # Show battery level
-lamzuctl battery
+lamzuctl get battery
+
+# Target a specific device (index from `list`, name substring, or PID)
+lamzuctl --device dongle info
 ```
 
 ### Stream Deck
@@ -80,7 +86,7 @@ lamzuctl battery
 
 ### Requirements
 
-- Rust 1.70+
+- Rust 1.88+
 - Windows 10+
 
 ### Build
@@ -92,17 +98,30 @@ cargo build --release
 # Stream Deck plugin
 cargo build --release --features streamdeck --bin lamzu-streamdeck
 
-# Package Stream Deck plugin
-.\build-plugin.ps1 -Release
+# Package Stream Deck plugin (release build; pass -Debug for a debug build)
+.\build-plugin.ps1
+
+# Run tests
+cargo test --all-features
 ```
 
 The packaged plugin will be created as `io.github.denzonl.lamzuctl.streamDeckPlugin`.
+
+## Troubleshooting the Stream Deck plugin
+
+The plugin logs to `%TEMP%\lamzu-streamdeck.log` (rotated to `.log.old` at 1 MB).
+
+- **Buttons show "asleep"**: the receiver is connected but the mouse is asleep, off, or out of
+  range. Move the mouse; the buttons update on the next poll (within 15 seconds) or on a key press.
+- **Buttons show "no mouse"**: no Lamzu receiver/cable was found, or it couldn't be opened.
 
 ## Technical Notes
 
 - The HID protocol was reverse-engineered for interoperability purposes
 - The plugin polls device state every 15 seconds when actions are visible
 - Device communication uses HID feature reports on the control interface
+- A wireless receiver answers requests even when the mouse is asleep, but with all-zero data;
+  the library reports this as a `MouseNotResponding` error
 
 ## Reporting Issues
 

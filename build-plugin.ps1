@@ -1,8 +1,11 @@
 # Build script for Lamzu Stream Deck Plugin
-# Usage: .\build-plugin.ps1 [-Release]
+# Usage: .\build-plugin.ps1 [-Debug]
+#
+# Builds in release mode by default. Debug builds panic on integer overflow and
+# are much larger, so only use -Debug when you are actively debugging the plugin.
 
 param(
-    [switch]$Release
+    [switch]$Debug
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,11 +14,11 @@ Write-Host "Building Lamzu Stream Deck Plugin..." -ForegroundColor Cyan
 
 # Build the binary
 $buildArgs = @("build", "--features", "streamdeck", "--bin", "lamzu-streamdeck")
-if ($Release) {
+if ($Debug) {
+    $targetDir = "target/debug"
+} else {
     $buildArgs += "--release"
     $targetDir = "target/release"
-} else {
-    $targetDir = "target/debug"
 }
 
 Write-Host "Running: cargo $($buildArgs -join ' ')" -ForegroundColor Yellow

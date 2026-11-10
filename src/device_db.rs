@@ -1,9 +1,11 @@
 //! Known Lamzu device database
 
 /// Lamzu USB Vendor IDs
-pub const LAMZU_VID: u16 = 0x373E;        // Maya X series
+#[rustfmt::skip]
+pub const LAMZU_VID: u16 = 0x373E; // Maya X series
 pub const LAMZU_AURORA_VID: u16 = 0x37B0; // Aurora series (TACHI, INCA, Maya, PARO, THORN, etc.)
-pub const ATLANTIS_VID: u16 = 0x3554;     // Atlantis series
+#[rustfmt::skip]
+pub const ATLANTIS_VID: u16 = 0x3554; // Atlantis series
 
 /// All known Lamzu vendor IDs
 pub const LAMZU_VIDS: &[u16] = &[LAMZU_VID, LAMZU_AURORA_VID, ATLANTIS_VID];
@@ -30,6 +32,7 @@ pub struct KnownDevice {
 /// Devices not in this list may still work - please report if they do!
 ///
 /// Note: This list is based on Lamzu Aurora software config.
+#[rustfmt::skip]
 pub const KNOWN_DEVICES: &[KnownDevice] = &[
     // === Maya X series (VID 0x373E) ===
     KnownDevice { vid: 0x373E, pid: 0x001C, name: "Maya X (Wired)" },

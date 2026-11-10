@@ -1,7 +1,11 @@
-//! Stream Deck WebSocket Protocol Types
+//! Stream Deck WebSocket protocol types.
 //!
-//! Defines all events received from Stream Deck and commands sent to it.
-//! Based on: https://docs.elgato.com/streamdeck/sdk/references/websocket/plugin/
+//! Only the events and commands this plugin actually uses are modelled.
+//! Anything else Stream Deck sends (e.g. `titleParametersDidChange`,
+//! `keyUp`, `deviceDidConnect`) deserializes to [`StreamDeckEvent::Other`]
+//! and is ignored, so new SDK events can never break event parsing.
+//!
+//! Reference: <https://docs.elgato.com/streamdeck/sdk/references/websocket/plugin/>
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -10,366 +14,102 @@ use serde_json::Value;
 #[derive(Debug, Deserialize)]
 #[serde(tag = "event", rename_all = "camelCase")]
 pub enum StreamDeckEvent {
-    /// An action instance is now visible on the Stream Deck
+    /// An action instance became visible
     WillAppear {
-        action: String,
         context: String,
-        device: String,
-        payload: AppearPayload,
-    },
-    /// An action instance is no longer visible
-    WillDisappear {
-        action: String,
-        context: String,
-        device: String,
-        payload: AppearPayload,
-    },
-    /// User pressed a key
-    KeyDown {
-        action: String,
-        context: String,
-        device: String,
-        payload: KeyPayload,
-    },
-    /// User released a key
-    KeyUp {
-        action: String,
-        context: String,
-        device: String,
-        payload: KeyPayload,
-    },
-    /// Settings updated via Property Inspector or setSettings
-    DidReceiveSettings {
-        action: String,
-        context: String,
-        device: String,
         payload: SettingsPayload,
     },
-    /// Global settings updated
-    DidReceiveGlobalSettings {
-        payload: GlobalSettingsPayload,
-    },
-    /// Property Inspector became visible
-    PropertyInspectorDidAppear {
-        action: String,
+    /// An action instance is no longer visible
+    WillDisappear { context: String },
+    /// User pressed a key
+    KeyDown {
         context: String,
-        device: String,
+        payload: SettingsPayload,
     },
-    /// Property Inspector was closed
-    PropertyInspectorDidDisappear {
-        action: String,
+    /// Settings changed via the Property Inspector
+    DidReceiveSettings {
         context: String,
-        device: String,
+        payload: SettingsPayload,
     },
-    /// Message from Property Inspector
+    /// Message from the Property Inspector
     SendToPlugin {
         action: String,
         context: String,
         payload: Value,
     },
-    /// System woke from sleep
+    /// Computer woke from sleep
     SystemDidWakeUp,
-    /// A device was connected
-    DeviceDidConnect {
-        device: String,
-        #[serde(rename = "deviceInfo")]
-        device_info: DeviceInfo,
-    },
-    /// A device was disconnected
-    DeviceDidDisconnect { device: String },
-    /// Application launched (monitored app)
-    ApplicationDidLaunch {
-        payload: ApplicationPayload,
-    },
-    /// Application terminated (monitored app)
-    ApplicationDidTerminate {
-        payload: ApplicationPayload,
-    },
-    /// Dial rotated (Stream Deck +)
-    DialRotate {
-        action: String,
-        context: String,
-        device: String,
-        payload: DialPayload,
-    },
-    /// Dial pressed (Stream Deck +)
-    DialPress {
-        action: String,
-        context: String,
-        device: String,
-        payload: DialPayload,
-    },
-    /// Touchpad touched (Stream Deck +)
-    TouchTap {
-        action: String,
-        context: String,
-        device: String,
-        payload: TouchPayload,
-    },
+    /// Any event this plugin doesn't handle
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AppearPayload {
-    pub settings: Value,
-    pub coordinates: Coordinates,
-    #[serde(default)]
-    pub state: u8,
-    #[serde(default)]
-    pub is_in_multi_action: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KeyPayload {
-    pub settings: Value,
-    pub coordinates: Coordinates,
-    #[serde(default)]
-    pub state: u8,
-    #[serde(default)]
-    pub is_in_multi_action: bool,
-    #[serde(default)]
-    pub user_desired_state: u8,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SettingsPayload {
-    pub settings: Value,
-    pub coordinates: Coordinates,
     #[serde(default)]
-    pub is_in_multi_action: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GlobalSettingsPayload {
     pub settings: Value,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
-pub struct Coordinates {
-    pub column: u8,
-    pub row: u8,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeviceInfo {
-    pub name: String,
-    #[serde(rename = "type")]
-    pub device_type: u8,
-    pub size: DeviceSize,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct DeviceSize {
-    pub columns: u8,
-    pub rows: u8,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ApplicationPayload {
-    pub application: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DialPayload {
-    pub settings: Value,
-    pub coordinates: Coordinates,
-    #[serde(default)]
-    pub ticks: i32,
-    #[serde(default)]
-    pub pressed: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TouchPayload {
-    pub settings: Value,
-    pub coordinates: Coordinates,
-    #[serde(default)]
-    pub tap_pos: Vec<i32>,
-    #[serde(default)]
-    pub hold: bool,
-}
-
-/// Commands to send to Stream Deck
+/// Commands sent to Stream Deck
 #[derive(Debug, Serialize)]
 #[serde(tag = "event", rename_all = "camelCase")]
 pub enum StreamDeckCommand {
-    /// Set the title of a button
     SetTitle {
         context: String,
-        payload: SetTitlePayload,
+        payload: TitlePayload,
     },
-    /// Set the image of a button (base64 encoded)
     SetImage {
         context: String,
-        payload: SetImagePayload,
+        payload: ImagePayload,
     },
-    /// Set the state of a multi-state action
     SetState {
         context: String,
-        payload: SetStatePayload,
+        payload: StatePayload,
     },
-    /// Show an alert triangle on a button
-    ShowAlert { context: String },
-    /// Show a checkmark on a button
-    ShowOk { context: String },
-    /// Save settings for an action instance
-    SetSettings {
+    ShowAlert {
         context: String,
-        payload: Value,
     },
-    /// Get settings for an action instance
-    GetSettings { context: String },
-    /// Save global settings
-    SetGlobalSettings {
-        context: String,
-        payload: Value,
-    },
-    /// Get global settings
-    GetGlobalSettings { context: String },
-    /// Open a URL in the default browser
-    OpenUrl {
-        payload: OpenUrlPayload,
-    },
-    /// Write to the plugin log
-    LogMessage {
-        payload: LogMessagePayload,
-    },
-    /// Send message to Property Inspector
     SendToPropertyInspector {
         action: String,
         context: String,
         payload: Value,
     },
-    /// Switch to a profile
-    SwitchToProfile {
-        context: String,
-        device: String,
-        payload: SwitchProfilePayload,
-    },
-    /// Set feedback for encoder (Stream Deck +)
-    SetFeedback {
-        context: String,
-        payload: Value,
-    },
-    /// Set feedback layout for encoder (Stream Deck +)
-    SetFeedbackLayout {
-        context: String,
-        payload: SetFeedbackLayoutPayload,
-    },
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SetTitlePayload {
+pub struct TitlePayload {
     pub title: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub target: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub state: Option<u8>,
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SetImagePayload {
+pub struct ImagePayload {
+    /// Data URI, or an empty string to restore the manifest default image
     pub image: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub target: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub state: Option<u8>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct SetStatePayload {
+pub struct StatePayload {
     pub state: u8,
 }
 
+/// Registration message sent right after connecting
 #[derive(Debug, Serialize)]
-pub struct OpenUrlPayload {
-    pub url: String,
+pub struct RegistrationMessage<'a> {
+    pub event: &'a str,
+    pub uuid: &'a str,
 }
 
-#[derive(Debug, Serialize)]
-pub struct LogMessagePayload {
-    pub message: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SwitchProfilePayload {
-    pub profile: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SetFeedbackLayoutPayload {
-    pub layout: String,
-}
-
-/// Registration message sent when connecting
-#[derive(Debug, Serialize)]
-pub struct RegistrationMessage {
-    pub event: String,
-    pub uuid: String,
-}
-
-/// Information passed to plugin on startup
-/// Using Value for fields we don't need to avoid parsing issues with new SDK versions
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PluginInfo {
-    pub application: ApplicationInfo,
-    #[serde(default)]
-    pub plugin: Option<Value>,
-    #[serde(default)]
-    pub device_pixel_ratio: f32,
-    #[serde(default)]
-    pub colors: Option<Value>,
-    #[serde(default)]
-    pub devices: Vec<ConnectedDevice>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ApplicationInfo {
-    #[serde(default)]
-    pub font: String,
-    #[serde(default)]
-    pub language: String,
-    pub platform: String,
-    #[serde(default, rename = "platformVersion")]
-    pub platform_version: String,
-    pub version: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ConnectedDevice {
-    pub id: String,
-    pub name: String,
-    pub size: DeviceSize,
-    #[serde(rename = "type")]
-    pub device_type: u8,
-}
-
-/// Our plugin's action settings
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// Per-action settings, as stored by the Property Inspector
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct ActionSettings {
     /// Action mode: "profile", "dpi", or "battery"
-    #[serde(default)]
     pub mode: ActionMode,
-    /// For profile mode: list of profiles to cycle through (e.g., [1, 2, 3])
-    /// For dpi mode: list of DPI stages to cycle through
-    #[serde(default)]
+    /// Profile mode: profiles to cycle through (e.g. `[1, 2, 3]`)
     pub selected_values: Vec<u8>,
-    /// Device selector for multi-device setups
-    #[serde(default)]
+    /// Device selector for multi-device setups (index, PID, or name substring)
     pub device_selector: Option<String>,
-    /// Show battery level as background bar (for profile/dpi modes)
-    #[serde(default)]
+    /// Show battery level as a background bar (profile/dpi modes)
     pub show_battery: bool,
 }
 
@@ -383,7 +123,76 @@ pub enum ActionMode {
 }
 
 impl ActionSettings {
+    /// Parse settings, falling back to defaults for missing or malformed data
     pub fn from_value(value: &Value) -> Self {
-        serde_json::from_value(value.clone()).unwrap_or_default()
+        Self::deserialize(value).unwrap_or_default()
+    }
+
+    /// The device selector, ignoring empty strings
+    pub fn selector(&self) -> Option<&str> {
+        self.device_selector.as_deref().filter(|s| !s.is_empty())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn unknown_events_are_ignored() {
+        let raw = r#"{"action":"x","context":"c","device":"d","event":"titleParametersDidChange","payload":{}}"#;
+        assert!(matches!(
+            serde_json::from_str::<StreamDeckEvent>(raw).unwrap(),
+            StreamDeckEvent::Other
+        ));
+    }
+
+    #[test]
+    fn will_appear_parses_with_extra_fields() {
+        let raw = json!({
+            "action": "io.github.denzonl.lamzuctl.action",
+            "context": "abc",
+            "device": "dev",
+            "event": "willAppear",
+            "payload": {
+                "controller": "Keypad",
+                "coordinates": {"column": 6, "row": 0},
+                "isInMultiAction": false,
+                "settings": {"mode": "profile", "selectedValues": [1, 2], "showBattery": true}
+            }
+        });
+        let StreamDeckEvent::WillAppear { context, payload } = serde_json::from_value(raw).unwrap()
+        else {
+            panic!("wrong variant");
+        };
+        assert_eq!(context, "abc");
+        let settings = ActionSettings::from_value(&payload.settings);
+        assert_eq!(settings.mode, ActionMode::Profile);
+        assert_eq!(settings.selected_values, vec![1, 2]);
+        assert!(settings.show_battery);
+    }
+
+    #[test]
+    fn settings_tolerate_garbage() {
+        assert_eq!(
+            ActionSettings::from_value(&json!({"mode": "nonsense"})),
+            ActionSettings::default()
+        );
+        let s = ActionSettings::from_value(&json!({"mode": "dpi", "deviceSelector": ""}));
+        assert_eq!(s.mode, ActionMode::Dpi);
+        assert_eq!(s.selector(), None);
+    }
+
+    #[test]
+    fn commands_serialize_in_sdk_shape() {
+        let cmd = StreamDeckCommand::SetTitle {
+            context: "c".into(),
+            payload: TitlePayload { title: "P1".into() },
+        };
+        assert_eq!(
+            serde_json::to_value(cmd).unwrap(),
+            json!({"event": "setTitle", "context": "c", "payload": {"title": "P1"}})
+        );
     }
 }

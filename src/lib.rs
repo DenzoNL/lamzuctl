@@ -11,6 +11,6 @@ mod types;
 
 // Re-export public API
 pub use controller::DeviceController;
-pub use device::{list_devices, select_device, DeviceInfo};
+pub use device::{DeviceInfo, list_devices, select_device};
 pub use device_db::*;
 pub use types::*;
